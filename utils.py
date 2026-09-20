@@ -34,6 +34,7 @@ from PIL import Image
 from tqdm import tqdm
 from torch import Tensor, einsum
 from scipy.spatial.distance import directed_hausdorff
+from scipy.spatial import cKDTree
 
 tqdm_ = partial(tqdm, dynamic_ncols=True,
                 leave=True,
@@ -186,6 +187,37 @@ def hausdorff(preds: Tensor, target: Tensor) -> Tensor:
 
     return res
 
+def numpy_hausdorff_95(pred: np.ndarray, target: np.ndarray) -> float:
+    assert pred.shape == target.shape
+
+    pred_pts = np.argwhere(pred) 
+    target_pts = np.argwhere(target)
+
+    if pred_pts.size == 0 and target_pts.size == 0:
+        return 0.0
+    if pred_pts.size == 0 or target_pts.size == 0:
+        return np.inf  
+
+    d1, _ = cKDTree(target_pts).query(pred_pts)
+    d2, _ = cKDTree(pred_pts).query(target_pts)
+
+    return float(np.percentile(np.concatenate([d1, d2]), 95))
+
+def hausdorff_95(preds: Tensor, target: Tensor) -> Tensor:
+    assert preds.shape == target.shape
+    assert one_hot(preds)
+    assert one_hot(target)
+
+    B, K, *_ = preds.shape
+    np_preds = preds.detach().cpu().numpy()
+    np_target = target.detach().cpu().numpy()
+
+    res = torch.zeros((B, K), dtype=torch.float32)
+    for b in range(B):
+        for k in range(K):
+            res[b, k] = numpy_hausdorff_95(np_preds[b, k].astype(bool), np_target[b, k].astype(bool))
+
+    return res.to(preds.device)
 
 def intersection(a: Tensor, b: Tensor) -> Tensor:
     assert a.shape == b.shape

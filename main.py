@@ -49,6 +49,7 @@ from utils import (Dcm,
                    tqdm_,
                    dice_coef,
                    hausdorff,
+                   hausdorff_95,
                    save_images)
 
 from losses import (CrossEntropy, DiceLoss, CrossEntropyDiceLoss)
@@ -147,6 +148,7 @@ def runTraining(args):
     log_loss_val: Tensor = torch.zeros((args.epochs, len(val_loader)))
     log_dice_val: Tensor = torch.zeros((args.epochs, len(val_loader.dataset), K))
     log_hd_val: Tensor = torch.zeros((args.epochs, len(val_loader.dataset), K))
+    log_hd95_val: Tensor = torch.zeros((args.epochs, len(val_loader.dataset), K))
 
     best_dice: float = 0
 
@@ -200,6 +202,7 @@ def runTraining(args):
 
                     if m == 'val':
                         log_hd_val[e, j:j + B, :] = hausdorff(pred_seg, gt)  # One HD value per sample and per class
+                        log_hd95_val[e, j:j + B, :] = hausdorff_95(pred_seg, gt)
 
                         with warnings.catch_warnings():
                             warnings.filterwarnings('ignore', category=UserWarning)
@@ -214,7 +217,8 @@ def runTraining(args):
                     postfix_dict: dict[str, str] = {"Dice": f"{log_dice[e, :j, 1:].mean():05.3f}",
                                                     "Loss": f"{log_loss[e, :i + 1].mean():5.2e}"}
                     if m == 'val':
-                        postfix_dict |= {"HD": f"{log_hd_val[e, :j, 1:].mean():05.3f}"}
+                        postfix_dict |= {"HD": f"{log_hd_val[e, :j, 1:].mean():05.3f}",
+                                         "HD95": f"{log_hd95_val[e, :j, 1:].mean():05.3f}"}
                     if K > 2:
                         postfix_dict |= {f"Dice-{k}": f"{log_dice[e, :j, k].mean():05.3f}"
                                          for k in range(1, K)}
@@ -226,6 +230,7 @@ def runTraining(args):
         np.save(args.dest / "loss_val.npy", log_loss_val)
         np.save(args.dest / "dice_val.npy", log_dice_val)
         np.save(args.dest / "hd_val.npy", log_hd_val)
+        np.save(args.dest / "hd95_val.npy", log_hd95_val)
 
         current_dice: float = log_dice_val[e, :, 1:].mean().item()
         if current_dice > best_dice:
