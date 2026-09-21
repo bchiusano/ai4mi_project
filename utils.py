@@ -33,7 +33,6 @@ import numpy as np
 from PIL import Image
 from tqdm import tqdm
 from torch import Tensor, einsum
-from scipy.spatial.distance import directed_hausdorff
 
 tqdm_ = partial(tqdm, dynamic_ncols=True,
                 leave=True,
@@ -157,34 +156,66 @@ dice_coef = partial(meta_dice, "bk...->bk")
 dice_batch = partial(meta_dice, "bk...->k")  # used for 3d dice
 
 
-def numpy_hausdorff(pred: np.ndarray, target: np.ndarray) -> float:
-    assert pred.shape == target.shape
+def patient_id_from_stem(stem: str) -> str:
+    """Return the patient portion of a sliced filename.
 
-    pred_pts, target_pts = np.argwhere(pred), np.argwhere(target)
-
-    if pred_pts.size == 0 and target_pts.size == 0:
-        return 0.0
-    if pred_pts.size == 0 or target_pts.size == 0:
-        return np.inf  # Undefined distance when only one of the two masks is empty
-
-    return max(directed_hausdorff(pred_pts, target_pts)[0],
-               directed_hausdorff(target_pts, pred_pts)[0])
+    SegTHOR slices are named like ``Patient_01_0123``.  Non-SegTHOR names are
+    returned unchanged, which keeps the helper safe for the toy datasets.
+    """
+    patient_id, separator, slice_index = stem.rpartition("_")
+    if separator and patient_id and slice_index.isdigit():
+        return patient_id
+    return stem
 
 
-def hausdorff(preds: Tensor, target: Tensor) -> Tensor:
-    assert preds.shape == target.shape
-    assert one_hot(preds)
-    assert one_hot(target)
+class PatientVolumeDice:
+    """Accumulate exact per-patient 3D Dice statistics from 2D batches.
 
-    B, K, *_ = preds.shape
-    np_preds, np_target = preds.detach().cpu().numpy(), target.detach().cpu().numpy()
+    Storing intersections and cardinalities is mathematically equivalent to
+    stacking every slice into a 3D volume, while using far less memory.  A
+    patient/class pair that is empty in both prediction and target is returned
+    as NaN instead of receiving an artificial perfect score.
+    """
 
-    res = torch.zeros((B, K), dtype=torch.float32)
-    for b in range(B):
-        for k in range(K):
-            res[b, k] = numpy_hausdorff(np_preds[b, k].astype(bool), np_target[b, k].astype(bool))
+    def __init__(self, classes: int):
+        self.classes = classes
+        self._intersection: dict[str, Tensor] = {}
+        self._cardinality: dict[str, Tensor] = {}
 
-    return res
+    def update(self, preds: Tensor, target: Tensor, stems: Iterable[str]) -> None:
+        assert preds.shape == target.shape
+        assert one_hot(preds)
+        assert one_hot(target)
+        assert preds.shape[1] == self.classes
+
+        stem_list = list(stems)
+        assert len(stem_list) == preds.shape[0]
+
+        spatial_dims = tuple(range(2, preds.ndim))
+        pred_bool = preds.detach().bool()
+        target_bool = target.detach().bool()
+        intersection = (pred_bool & target_bool).sum(dim=spatial_dims, dtype=torch.int64).cpu()
+        cardinality = (pred_bool.sum(dim=spatial_dims, dtype=torch.int64)
+                       + target_bool.sum(dim=spatial_dims, dtype=torch.int64)).cpu()
+
+        for sample_index, stem in enumerate(stem_list):
+            patient_id = patient_id_from_stem(stem)
+            if patient_id not in self._intersection:
+                self._intersection[patient_id] = torch.zeros(self.classes, dtype=torch.int64)
+                self._cardinality[patient_id] = torch.zeros(self.classes, dtype=torch.int64)
+            self._intersection[patient_id] += intersection[sample_index]
+            self._cardinality[patient_id] += cardinality[sample_index]
+
+    def compute(self) -> tuple[list[str], Tensor]:
+        if not self._intersection:
+            raise RuntimeError("No samples were added to PatientVolumeDice")
+
+        patient_ids = sorted(self._intersection)
+        intersection = torch.stack([self._intersection[p] for p in patient_ids]).double()
+        cardinality = torch.stack([self._cardinality[p] for p in patient_ids]).double()
+        nan = torch.full_like(cardinality, float("nan"))
+        dice = torch.where(cardinality > 0, 2 * intersection / cardinality, nan)
+        return patient_ids, dice.float()
 
 
 def intersection(a: Tensor, b: Tensor) -> Tensor:

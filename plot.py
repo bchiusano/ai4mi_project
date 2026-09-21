@@ -42,21 +42,26 @@ def run(args: argparse.Namespace) -> None:
         run_comparison(args, metrics, E, K)
         return
 
+    valid_epochs = np.isfinite(metrics).any(axis=tuple(range(1, metrics.ndim)))
+    if not valid_epochs.any():
+        raise ValueError(f"No completed epochs found in {args.metric_file}")
+
     fig = plt.figure()
     ax = fig.gca()
     ax.set_title(str(args.metric_file))
 
-    epcs = np.arange(E)
+    epcs = np.arange(E)[valid_epochs]
 
     for k in range(1, K):
-        y = metrics[:, :, k].mean(axis=1)
+        y = np.nanmean(metrics[valid_epochs, :, k], axis=1)
         ax.plot(epcs, y, label=f"{k=}", linewidth=1.5)
 
     if K > 2:
-        ax.plot(epcs, metrics.mean(axis=1).mean(axis=1), label="All classes", linewidth=3)
+        foreground = metrics[valid_epochs, :, 1:]
+        ax.plot(epcs, np.nanmean(foreground, axis=(1, 2)), label="Foreground mean", linewidth=3)
         ax.legend()
     else:
-        ax.plot(epcs, metrics.mean(axis=1), linewidth=3)
+        ax.plot(epcs, np.nanmean(metrics[valid_epochs], axis=1), linewidth=3)
 
     fig.tight_layout()
     if args.dest:

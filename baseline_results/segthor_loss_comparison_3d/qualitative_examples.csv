@@ -1,0 +1,4 @@
+patient,filename,organs_present,ground_truth_foreground_pixels,total_prediction_error_pixels,prediction_disagreement_pixels,CE_slice_dice,Dice_slice_dice,CE + Dice_slice_dice
+Patient_01,Patient_01_0119.png,4,1866,2933,2982,0.459350286769438,0.6346596765367328,0.3916361004223572
+Patient_15,Patient_15_0096.png,3,1732,4987,4122,0.4643276920459157,0.2625087069648538,0.18579610538373426
+Patient_19,Patient_19_0036.png,3,1952,3302,4269,0.058997050147492625,0.4610352655349671,0.532481727886057

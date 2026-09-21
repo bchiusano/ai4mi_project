@@ -1,0 +1,8 @@
+Run directory: /scratch-shared/scur0136/ai4mi_project/results/segthor_clean/baseline_patient19_fixed
+Evaluated epochs: 25 (0-24)
+Best patient-level 3D-Dice epoch: 24
+Mean foreground patient-level 3D Dice: 0.524081
+Esophagus 3D Dice: 0.315803
+Heart 3D Dice: 0.793981
+Trachea 3D Dice: 0.489941
+Aorta 3D Dice: 0.496599

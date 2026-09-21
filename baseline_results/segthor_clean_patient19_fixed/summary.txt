@@ -1,0 +1,8 @@
+SegTHOR baseline after Patient 19 correction
+Best epoch: 24
+Mean foreground validation Dice: 0.741020
+Validation loss: 0.025472
+Esophagus Dice: 0.561023
+Heart Dice: 0.901027
+Trachea Dice: 0.800246
+Aorta Dice: 0.701782

@@ -1,0 +1,1 @@
+>>> Improved patient-level 3D dice at epoch 21: 0.609->0.613 DSC
