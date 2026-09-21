@@ -53,6 +53,9 @@ from utils import (Dcm,
 
 from losses import (CrossEntropy, DiceLoss, CrossEntropyDiceLoss)
 
+import os
+import wandb
+
 LOSSES: dict[str, Any] = {'ce': CrossEntropy, 'dice': DiceLoss, 'ce_dice': CrossEntropyDiceLoss}
 
 datasets_params: dict[str, dict[str, Any]] = {}
@@ -131,6 +134,25 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
 def runTraining(args):
     print(f">>> Setting up to train on {args.dataset} with {args.mode}")
     net, optimizer, device, train_loader, val_loader, K = setup(args)
+
+    # wandb initialization
+    wandb_run = wandb.init(
+        project=os.environ.get("WANDB_PROJECT", "ai4mi-segthor"),
+        entity=os.environ.get("WANDB_ENTITY"),
+        name=os.environ.get("WANDB_RUN_NAME", f"{args.dataset}-{args.loss}"),
+        group=os.environ.get("WANDB_RUN_GROUP", "ce-vs-ce-dice"),
+        config={
+            "dataset": args.dataset,
+            "mode": args.mode,
+            "loss": args.loss,
+            "epochs": args.epochs,
+            "batch_size": datasets_params[args.dataset]["B"],
+            "learning_rate": 0.0005,
+            "optimizer": "Adam",
+            "split_seed": 0,
+        },
+    )
+
 
     if args.mode == "full":
         idk = list(range(K))  # Supervise both background and foreground
@@ -228,6 +250,26 @@ def runTraining(args):
         np.save(args.dest / "hd_val.npy", log_hd_val)
 
         current_dice: float = log_dice_val[e, :, 1:].mean().item()
+
+        # log metrics to wandb
+        train_loss = log_loss_tra[e].mean().item()
+        val_loss = log_loss_val[e].mean().item()
+        foreground_dice = log_dice_val[e, :, 1:].mean().item()
+        foreground_hd = log_hd_val[e, :, 1:].mean().item()
+
+        wandb.log({
+            "epoch": e,
+            "train/loss": train_loss,
+            "val/loss": val_loss,
+            "val/foreground_dice": foreground_dice,
+            "val/foreground_hausdorff": foreground_hd,
+            "val/esophagus_dice": log_dice_val[e, :, 1].mean().item(),
+            "val/heart_dice": log_dice_val[e, :, 2].mean().item(),
+            "val/trachea_dice": log_dice_val[e, :, 3].mean().item(),
+            "val/aorta_dice": log_dice_val[e, :, 4].mean().item(),
+        })
+
+
         if current_dice > best_dice:
             message = f">>> Improved dice at epoch {e}: {best_dice:05.3f}->{current_dice:05.3f} DSC"
             print(message)
@@ -242,6 +284,9 @@ def runTraining(args):
 
             torch.save(net, args.dest / "bestmodel.pkl")
             torch.save(net.state_dict(), args.dest / "bestweights.pt")
+
+    # end of the epochs loop
+    wandb_run.finish()
 
 
 def main():
