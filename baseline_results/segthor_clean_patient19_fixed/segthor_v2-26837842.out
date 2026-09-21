@@ -1,0 +1,81 @@
+Started: Thu Sep 17 11:55:43 CEST 2026
+Host: gcn2.local.snellius.surf.nl
+NVIDIA A100-SXM4-40GB, 40960 MiB
+NVIDIA A100-SXM4-40GB, 40960 MiB
+NVIDIA A100-SXM4-40GB, 40960 MiB
+NVIDIA A100-SXM4-40GB, 40960 MiB
+[01/20] Correcting Patient_01...
+    erosion=3, esophagus=32,375, aorta=106,553, endpoint-error=0 slices.
+[02/20] Correcting Patient_02...
+    erosion=1, esophagus=19,402, aorta=85,951, endpoint-error=0 slices.
+[03/20] Correcting Patient_03...
+    erosion=3, esophagus=13,503, aorta=39,751, endpoint-error=0 slices.
+[04/20] Correcting Patient_04...
+    erosion=3, esophagus=18,446, aorta=149,910, endpoint-error=0 slices.
+[05/20] Correcting Patient_05...
+    erosion=3, esophagus=23,473, aorta=136,553, endpoint-error=0 slices.
+[06/20] Correcting Patient_06...
+    erosion=1, esophagus=19,061, aorta=119,931, endpoint-error=0 slices.
+[07/20] Correcting Patient_07...
+    erosion=6, esophagus=25,296, aorta=89,933, endpoint-error=0 slices.
+[08/20] Correcting Patient_08...
+    erosion=2, esophagus=15,026, aorta=84,547, endpoint-error=0 slices.
+[09/20] Correcting Patient_09...
+    erosion=1, esophagus=16,086, aorta=59,517, endpoint-error=0 slices.
+[10/20] Correcting Patient_10...
+    erosion=3, esophagus=27,245, aorta=108,723, endpoint-error=0 slices.
+[11/20] Correcting Patient_11...
+    erosion=1, esophagus=21,557, aorta=45,001, endpoint-error=0 slices.
+[12/20] Correcting Patient_12...
+    erosion=3, esophagus=24,285, aorta=149,731, endpoint-error=0 slices.
+[13/20] Correcting Patient_13...
+    erosion=1, esophagus=23,692, aorta=133,168, endpoint-error=0 slices.
+[14/20] Correcting Patient_14...
+    erosion=3, esophagus=15,876, aorta=72,570, endpoint-error=0 slices.
+[15/20] Correcting Patient_15...
+    erosion=0, esophagus=27,339, aorta=232,590, endpoint-error=0 slices.
+[16/20] Correcting Patient_16...
+    erosion=1, esophagus=17,686, aorta=68,521, endpoint-error=0 slices.
+[17/20] Correcting Patient_17...
+    erosion=3, esophagus=13,112, aorta=58,507, endpoint-error=0 slices.
+[18/20] Correcting Patient_18...
+    erosion=2, esophagus=24,189, aorta=97,057, endpoint-error=0 slices.
+[19/20] Correcting Patient_19...
+    erosion=0, esophagus=16,185, aorta=71,615, endpoint-error=0 slices.
+[20/20] Correcting Patient_20...
+    erosion=3, esophagus=10,518, aorta=43,432, endpoint-error=0 slices.
+
+Saved corrected dataset to: /scratch-shared/scur0136/ai4mi_project/data/segthor_part1_clean_cc_v2
+Saved QC report to: /scratch-shared/scur0136/ai4mi_project/data/segthor_part1_clean_cc_v2/split_report.csv
+No automatic QC warnings. Visual review is still recommended.
+Namespace(source_dir='/scratch-shared/scur0136/ai4mi_project/data/segthor_part1_clean_cc_v2', dest_dir='/scratch-shared/scur0136/ai4mi_project/data/SEGTHOR_CLEAN_v2', shape=[256, 256], retains=5, seed=0, fold=0, process=8)
+Founds 20 in the id list
+['Patient_01', 'Patient_02', 'Patient_03', 'Patient_04', 'Patient_05', 'Patient_06', 'Patient_07', 'Patient_08', 'Patient_09', 'Patient_10']
+Founds 0 test ids
+[]
+Slicing 15 pairs to /scratch-shared/scur0136/ai4mi_project/data/SEGTHOR_CLEAN_v2/train
+Slicing 5 pairs to /scratch-shared/scur0136/ai4mi_project/data/SEGTHOR_CLEAN_v2/val
+Saved spacing dictionnary to <_io.BufferedWriter name='/scratch-shared/scur0136/ai4mi_project/data/SEGTHOR_CLEAN_v2/spacing.pkl'>
+SEGTHOR_CLEAN -> /gpfs/scratch1/shared/scur0136/ai4mi_project/data/SEGTHOR_CLEAN_v2
+Namespace(epochs=25, dataset='SEGTHOR_CLEAN', mode='full', dest=PosixPath('/scratch-shared/scur0136/ai4mi_project/results/segthor_clean/baseline_patient19_fixed'), gpu=True, debug=False)
+>>> Setting up to train on SEGTHOR_CLEAN with full
+>> Picked cuda to run experiments
+> Initialized ENet (in_dim=1->out_dim=5) with {'kernels': 8, 'factor': 2}
+> root=PosixPath('data/SEGTHOR_CLEAN')
+>> Created train dataset with 2817 images...
+> root=PosixPath('data/SEGTHOR_CLEAN')
+>> Created val dataset with 915 images...
+Initialized CrossEntropy with {'idk': [0, 1, 2, 3, 4]}
+>>> Improved dice at epoch 0: 0.000->0.360 DSC
+>>> Improved dice at epoch 1: 0.360->0.613 DSC
+>>> Improved dice at epoch 2: 0.613->0.618 DSC
+>>> Improved dice at epoch 3: 0.618->0.625 DSC
+>>> Improved dice at epoch 4: 0.625->0.644 DSC
+>>> Improved dice at epoch 5: 0.644->0.673 DSC
+>>> Improved dice at epoch 11: 0.673->0.691 DSC
+>>> Improved dice at epoch 15: 0.691->0.695 DSC
+>>> Improved dice at epoch 16: 0.695->0.698 DSC
+>>> Improved dice at epoch 19: 0.698->0.719 DSC
+>>> Improved dice at epoch 21: 0.719->0.730 DSC
+>>> Improved dice at epoch 24: 0.730->0.741 DSC
+Finished: Thu Sep 17 13:18:31 CEST 2026

@@ -1,0 +1,10 @@
+Run directory: /scratch-shared/scur0136/ai4mi_project/results/segthor_clean/preliminary_3d_dice_v1/ce_dice
+Completed epochs: 25
+Best 3D-Dice epoch: 21
+Mean foreground 3D Dice: 0.613180
+Training loss at best epoch: 0.542566
+Validation loss at best epoch: 0.660570
+Esophagus 3D Dice: 0.442959
+Heart 3D Dice: 0.814486
+Trachea 3D Dice: 0.654341
+Aorta 3D Dice: 0.540932

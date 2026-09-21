@@ -48,7 +48,8 @@ from utils import (Dcm,
                    probs2class,
                    tqdm_,
                    dice_coef,
-                   hausdorff,
+                   PatientVolumeDice,
+                   patient_id_from_stem,
                    save_images)
 
 from losses import (CrossEntropy, DiceLoss, CrossEntropyDiceLoss)
@@ -142,15 +143,21 @@ def runTraining(args):
     loss_fn = LOSSES[args.loss](idk=idk)
 
     # Notice one has the length of the _loader_, and the other one of the _dataset_
-    log_loss_tra: Tensor = torch.zeros((args.epochs, len(train_loader)))
-    log_dice_tra: Tensor = torch.zeros((args.epochs, len(train_loader.dataset), K))
-    log_loss_val: Tensor = torch.zeros((args.epochs, len(val_loader)))
-    log_dice_val: Tensor = torch.zeros((args.epochs, len(val_loader.dataset), K))
-    log_hd_val: Tensor = torch.zeros((args.epochs, len(val_loader.dataset), K))
+    log_loss_tra: Tensor = torch.full((args.epochs, len(train_loader)), float("nan"))
+    log_dice_tra: Tensor = torch.full((args.epochs, len(train_loader.dataset), K), float("nan"))
+    log_loss_val: Tensor = torch.full((args.epochs, len(val_loader)), float("nan"))
+    log_dice_val: Tensor = torch.full((args.epochs, len(val_loader.dataset), K), float("nan"))
 
-    best_dice: float = 0
+    val_patient_ids = sorted({patient_id_from_stem(img_path.stem)
+                              for img_path, _ in val_loader.dataset.files})
+    log_dice3d_val: Tensor = torch.full((args.epochs, len(val_patient_ids), K), float("nan"))
+    with open(args.dest / "dice3d_val_patients.txt", "w") as f:
+        f.write("\n".join(val_patient_ids) + "\n")
+
+    best_dice: float = float("-inf")
 
     for e in range(args.epochs):
+        patient_dice = PatientVolumeDice(K)
         for m in ['train', 'val']:
             match m:
                 case 'train':
@@ -199,7 +206,7 @@ def runTraining(args):
                         opt.step()
 
                     if m == 'val':
-                        log_hd_val[e, j:j + B, :] = hausdorff(pred_seg, gt)  # One HD value per sample and per class
+                        patient_dice.update(pred_seg, gt, data['stems'])
 
                         with warnings.catch_warnings():
                             warnings.filterwarnings('ignore', category=UserWarning)
@@ -211,25 +218,43 @@ def runTraining(args):
 
                     j += B  # Keep in mind that _in theory_, each batch might have a different size
                     # For the DSC average: do not take the background class (0) into account:
-                    postfix_dict: dict[str, str] = {"Dice": f"{log_dice[e, :j, 1:].mean():05.3f}",
+                    postfix_dict: dict[str, str] = {"SliceDice": f"{log_dice[e, :j, 1:].mean():05.3f}",
                                                     "Loss": f"{log_loss[e, :i + 1].mean():5.2e}"}
-                    if m == 'val':
-                        postfix_dict |= {"HD": f"{log_hd_val[e, :j, 1:].mean():05.3f}"}
                     if K > 2:
-                        postfix_dict |= {f"Dice-{k}": f"{log_dice[e, :j, k].mean():05.3f}"
+                        postfix_dict |= {f"SliceDice-{k}": f"{log_dice[e, :j, k].mean():05.3f}"
                                          for k in range(1, K)}
                     tq_iter.set_postfix(postfix_dict)
+
+        epoch_patient_ids, epoch_dice3d = patient_dice.compute()
+        if epoch_patient_ids != val_patient_ids:
+            raise RuntimeError(f"Validation patients changed: {epoch_patient_ids} != {val_patient_ids}")
+        log_dice3d_val[e] = epoch_dice3d
+
+        organ_scores = torch.nanmean(epoch_dice3d[:, 1:], dim=0)
+        current_dice: float = torch.nanmean(organ_scores).item()
+        if not np.isfinite(current_dice):
+            raise RuntimeError("No finite foreground patient-level Dice values were computed")
+        organ_message = " ".join(
+            f"Dice-{k}={organ_scores[k - 1].item():05.3f}"
+            if torch.isfinite(organ_scores[k - 1]) else f"Dice-{k}=nan"
+            for k in range(1, K)
+        )
+        print(f">>> Patient-level 3D validation Dice at epoch {e}: {current_dice:05.3f} "
+              + organ_message)
 
         # I save it at each epochs, in case the code crashes or I decide to stop it early
         np.save(args.dest / "loss_tra.npy", log_loss_tra)
         np.save(args.dest / "dice_tra.npy", log_dice_tra)
         np.save(args.dest / "loss_val.npy", log_loss_val)
         np.save(args.dest / "dice_val.npy", log_dice_val)
-        np.save(args.dest / "hd_val.npy", log_hd_val)
+        np.save(args.dest / "dice3d_val.npy", log_dice3d_val)
 
-        current_dice: float = log_dice_val[e, :, 1:].mean().item()
         if current_dice > best_dice:
-            message = f">>> Improved dice at epoch {e}: {best_dice:05.3f}->{current_dice:05.3f} DSC"
+            if np.isfinite(best_dice):
+                message = (f">>> Improved patient-level 3D dice at epoch {e}: "
+                           f"{best_dice:05.3f}->{current_dice:05.3f} DSC")
+            else:
+                message = f">>> Initial patient-level 3D dice at epoch {e}: {current_dice:05.3f} DSC"
             print(message)
             best_dice = current_dice
             with open(args.dest / "best_epoch.txt", 'w') as f:
