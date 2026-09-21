@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=segthor_ablation
 #SBATCH --account=gpuuva084
-#SBATCH --partition=gpu_mig
+#SBATCH --partition=gpu_a100
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=9
 #SBATCH --mem=50G
@@ -13,7 +13,7 @@ set -euo pipefail
 
 PROJECT="$HOME/ai4mi_project"
 SOURCE="$PROJECT/data/segthor_part1"
-SCRATCH_PROJECT="/scratch-shared/$USER/ai4mi_project/ablation_ce_ce_dice"
+SCRATCH_PROJECT="/scratch-shared/$USER/ai4mi_project/ablation_ce_ce_dice_v4"
 
 CLEAN_DATA="$SCRATCH_PROJECT/data/segthor_part1_clean"
 SLICED_DATA="$SCRATCH_PROJECT/data/SEGTHOR_CLEAN"
@@ -26,7 +26,6 @@ cd "$PROJECT"
 
 module purge
 module load 2025
-module load Anaconda3/2025.06-1
 source ai4mi/bin/activate
 
 export PYTHONUNBUFFERED=1

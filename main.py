@@ -271,24 +271,25 @@ def runTraining(args):
         np.save(args.dest / "dice_val.npy", log_dice_val)
         np.save(args.dest / "dice3d_val.npy", log_dice3d_val)
 
-        current_dice: float = log_dice_val[e, :, 1:].mean().item()
-
         # log metrics to wandb
         train_loss = log_loss_tra[e].mean().item()
         val_loss = log_loss_val[e].mean().item()
-        foreground_dice = log_dice_val[e, :, 1:].mean().item()
-        foreground_hd = log_hd_val[e, :, 1:].mean().item()
+        foreground_dice_2d = log_dice_val[e, :, 1:].mean().item()
 
         wandb.log({
             "epoch": e,
             "train/loss": train_loss,
             "val/loss": val_loss,
-            "val/foreground_dice": foreground_dice,
-            "val/foreground_hausdorff": foreground_hd,
-            "val/esophagus_dice": log_dice_val[e, :, 1].mean().item(),
-            "val/heart_dice": log_dice_val[e, :, 2].mean().item(),
-            "val/trachea_dice": log_dice_val[e, :, 3].mean().item(),
-            "val/aorta_dice": log_dice_val[e, :, 4].mean().item(),
+            "val/foreground_dice_2d": foreground_dice_2d,
+            "val/esophagus_dice_2d": log_dice_val[e, :, 1].mean().item(),
+            "val/heart_dice_2d": log_dice_val[e, :, 2].mean().item(),
+            "val/trachea_dice_2d": log_dice_val[e, :, 3].mean().item(),
+            "val/aorta_dice_2d": log_dice_val[e, :, 4].mean().item(),
+            "val/foreground_dice_3d": current_dice,
+            "val/esophagus_dice_3d": organ_scores[0].item(),
+            "val/heart_dice_3d": organ_scores[1].item(),
+            "val/trachea_dice_3d": organ_scores[2].item(),
+            "val/aorta_dice_3d": organ_scores[3].item(),
         })
 
 
