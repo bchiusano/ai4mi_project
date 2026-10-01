@@ -44,6 +44,7 @@ from functools import partial
 from data_loading.dataset import SliceDataset
 from models.ShallowNet import shallowCNN
 from models.ENet import ENet
+from models.UNet import UNet
 from utils import (Dcm,
                    class2one_hot,
                    probs2one_hot,
@@ -93,7 +94,17 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
     K: int = datasets_params[args.dataset]['K']
     kernels: int = datasets_params[args.dataset]['kernels'] if 'kernels' in datasets_params[args.dataset] else 8
     factor: int = datasets_params[args.dataset]['factor'] if 'factor' in datasets_params[args.dataset] else 2
-    net = datasets_params[args.dataset]['net'](1, K, kernels=kernels, factor=factor)
+    model_class = datasets_params[args.dataset]["net"]
+    if args.model is not None:
+        if not args.dataset.startswith("SEGTHOR"):
+            raise ValueError(
+                "model is currently intended for SEGTHOR datasets"
+            )
+        model_class = {
+            "enet": ENet,
+            "unet": UNet,
+        }[args.model]
+    net = model_class(1, K, kernels=kernels, factor=factor)
     net.init_weights()
     net.to(device)
 
@@ -311,6 +322,7 @@ def main():
     parser.add_argument('--debug', action='store_true',
                         help="Keep only a fraction (10 samples) of the datasets, "
                              "to test the logics around epochs and logging easily.")
+    parser.add_argument("--model", choices=["enet", "unet"], default=None, help=("Optional SEGTHOR architectures. If ommited, the existing architecture is used."))
 
     args = parser.parse_args()
 
