@@ -7,18 +7,26 @@ import numpy as np
 from PIL import Image
 import torch
 
+from data_loading.dataset import make_dataset
 from models.ENet import ENet
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate SegTHOR masks from saved ENet weights")
     parser.add_argument("--weights", type=Path, required=True)
-    parser.add_argument("--image-dir", type=Path, required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--image-dir", type=Path, help="Legacy directory containing PNG images.")
+    source.add_argument("--data-dir", type=Path, help="Preprocessed dataset with split.json.")
+    parser.add_argument("--subset", choices=["train", "val", "test"], default="test")
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--gpu", action="store_true")
     args = parser.parse_args()
 
-    image_paths = sorted(args.image_dir.glob("*.png"))
+    if args.data_dir is not None:
+        image_paths = [path for path, _ in make_dataset(args.data_dir, args.subset)]
+    else:
+        image_paths = sorted(args.image_dir.glob("*.png"))
     if not image_paths:
         raise RuntimeError(f"No PNG images found in {args.image_dir}")
     existing = list(args.output_dir.glob("*.png")) if args.output_dir.exists() else []
@@ -29,8 +37,10 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     model = ENet(1, 5, kernels=8, factor=2)
-    state_dict = torch.load(args.weights, map_location="cpu", weights_only=True)
+    device = torch.device("cuda" if args.gpu and torch.cuda.is_available() else "cpu")
+    state_dict = torch.load(args.weights, map_location=device, weights_only=True)
     model.load_state_dict(state_dict)
+    model.to(device)
     model.eval()
 
     with torch.inference_mode():
@@ -40,7 +50,7 @@ def main() -> None:
                 np.asarray(Image.open(path).convert("L"), dtype=np.float32) / 255.0
                 for path in batch_paths
             ]
-            images = torch.from_numpy(np.stack(arrays)[:, None, :, :])
+            images = torch.from_numpy(np.stack(arrays)[:, None, :, :]).to(device)
             predictions = model(images).argmax(dim=1).cpu().numpy().astype(np.uint8)
             for path, prediction in zip(batch_paths, predictions):
                 Image.fromarray(prediction * 63).save(args.output_dir / path.name)

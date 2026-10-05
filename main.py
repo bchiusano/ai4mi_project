@@ -23,6 +23,7 @@
 # SOFTWARE.
 
 import argparse
+import json
 import os
 import warnings
 from typing import Any
@@ -32,7 +33,6 @@ from operator import itemgetter
 from shutil import copytree, rmtree
 
 import torch
-import wandb
 import numpy as np
 import torch.nn.functional as F
 from torch import nn, Tensor
@@ -42,6 +42,11 @@ from torch.utils.data import DataLoader
 from functools import partial 
 
 from data_loading.dataset import SliceDataset
+from data_loading.reproducibility import (
+    data_loader_generator,
+    seed_data_loader_worker,
+    seed_everything,
+)
 from models.ShallowNet import shallowCNN
 from models.ENet import ENet
 from utils import (Dcm,
@@ -63,6 +68,7 @@ datasets_params: dict[str, dict[str, Any]] = {}
 # Avoids the classes with C (often used for the number of Channel)
 datasets_params["TOY2"] = {'K': 2, 'net': shallowCNN, 'B': 2, 'kernels': 8, 'factor': 2}
 datasets_params["SEGTHOR"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
+datasets_params["SEGTHOR_FULL"] = {'K': 5, 'net': ENet, 'B': 4, 'kernels': 8, 'factor': 2}
 datasets_params["SEGTHOR_CLEAN"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 datasets_params["SEGTHOR_CORRECTED"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 
@@ -85,6 +91,8 @@ def gt_transform(K, img):
         return img[0]
 
 def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
+    seed_everything(args.seed)
+
     # Networks and scheduler
     gpu: bool = args.gpu and torch.cuda.is_available()
     device = torch.device("cuda") if gpu else torch.device("cpu")
@@ -104,17 +112,18 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
     B: int = datasets_params[args.dataset]['B']
     root_dir = Path("data") / args.dataset
 
-
-
     train_set = SliceDataset('train',
                              root_dir,
                              img_transform=img_transform,
                              gt_transform= partial(gt_transform, K),
                              debug=args.debug)
+    train_generator = data_loader_generator(args.seed)
     train_loader = DataLoader(train_set,
                               batch_size=B,
                               num_workers=5,
-                              shuffle=True)
+                              shuffle=True,
+                              worker_init_fn=seed_data_loader_worker,
+                              generator=train_generator)
 
     val_set = SliceDataset('val',
                            root_dir,
@@ -124,7 +133,9 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
     val_loader = DataLoader(val_set,
                             batch_size=B,
                             num_workers=5,
-                            shuffle=False)
+                            shuffle=False,
+                            worker_init_fn=seed_data_loader_worker,
+                            generator=data_loader_generator(args.seed + 1))
 
     args.dest.mkdir(parents=True, exist_ok=True)
 
@@ -132,8 +143,37 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
 
 
 def runTraining(args):
+    try:
+        import wandb
+    except ModuleNotFoundError as error:
+        raise RuntimeError(
+            "Training logging requires wandb; install the project requirements first."
+        ) from error
+
     print(f">>> Setting up to train on {args.dataset} with {args.mode}")
     net, optimizer, device, train_loader, val_loader, K = setup(args)
+
+    split_path = Path("data") / args.dataset / "split.json"
+    split_metadata = (
+        json.loads(split_path.read_text(encoding="utf-8"))
+        if split_path.is_file()
+        else None
+    )
+    run_metadata = {
+        **{
+            name: str(value) if isinstance(value, Path) else value
+            for name, value in vars(args).items()
+        },
+        "torch_version": torch.__version__,
+        "cuda_version": torch.version.cuda,
+        "cudnn_version": torch.backends.cudnn.version(),
+        "device": str(device),
+        "split_seed": split_metadata.get("seed") if split_metadata else None,
+        "test_patients": split_metadata.get("test") if split_metadata else None,
+    }
+    (args.dest / "run_config.json").write_text(
+        json.dumps(run_metadata, indent=2), encoding="utf-8"
+    )
 
     wandb_run = wandb.init(
         project=os.environ.get("WANDB_PROJECT", "ai4mi-segthor"),
@@ -141,7 +181,7 @@ def runTraining(args):
         name=os.environ.get("WANDB_RUN_NAME", f"{args.dataset}-{args.loss}"),
         group=os.environ.get("WANDB_RUN_GROUP"),
         mode=os.environ.get("WANDB_MODE", "online"),
-        config=vars(args) | {"classes": K, "device": str(device)},
+        config=run_metadata | {"classes": K},
     )
 
     if args.mode == "full":
@@ -302,8 +342,10 @@ def main():
     parser.add_argument('--epochs', default=20, type=int)
     parser.add_argument('--dataset', default='TOY2', choices=datasets_params.keys())
     parser.add_argument('--mode', default='full', choices=['partial', 'full'])
-    parser.add_argument('--loss', default='ce', choices=list(LOSSES.keys()),
+    parser.add_argument('--loss', default='ce_dice', choices=list(LOSSES.keys()),
                         help="Loss function to use for training.")
+    parser.add_argument('--seed', default=0, type=int,
+                        help="Random seed for initialization and data-loader shuffling.")
     parser.add_argument('--dest', type=Path, required=True,
                         help="Destination directory to save the results (predictions and weights).")
 
