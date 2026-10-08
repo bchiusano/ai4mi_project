@@ -25,9 +25,12 @@
 from pathlib import Path
 from typing import Callable, Union
 
+import torch
 from torch import Tensor
 from PIL import Image
 from torch.utils.data import Dataset
+
+from utils import patient_id_from_stem
 
 
 def make_dataset(root, subset) -> list[tuple[Path, Path | None]]:
@@ -49,20 +52,43 @@ def make_dataset(root, subset) -> list[tuple[Path, Path | None]]:
     return list(zip(images, full_labels))
 
 
+def neighbour_indices(paths: list[Path], context: int) -> list[list[int]]:
+    """For each slice, the indices of the 2 * context + 1 slices centered on it.
+
+    Expects the paths sorted by patient, then slice number (as make_dataset does).
+    Neighbours never cross a patient boundary: at the first and last slices of a
+    volume, the edge slice is repeated.
+    """
+    patients: list[str] = [patient_id_from_stem(p.stem) for p in paths]
+
+    # First and last index of each patient's slices
+    first: dict[str, int] = {}
+    last: dict[str, int] = {}
+    for i, patient in enumerate(patients):
+        first.setdefault(patient, i)
+        last[patient] = i
+
+    return [[min(max(i + d, first[patient]), last[patient]) for d in range(-context, context + 1)]
+            for i, patient in enumerate(patients)]
+
+
 class SliceDataset(Dataset):
     def __init__(self, subset, root_dir, img_transform=None,
-                 gt_transform=None, augment=False, equalize=False, debug=False):
+                 gt_transform=None, augment=False, equalize=False, debug=False,
+                 context: int = 0):
         self.root_dir: str = root_dir
         self.img_transform: Callable = img_transform
         self.gt_transform: Callable = gt_transform
         self.augmentation: bool = augment
         self.equalize: bool = equalize
+        self.context: int = context  # Number of neighbouring slices on each side (2.5D input)
 
         self.test_mode: bool = subset == 'test'
 
         self.files = make_dataset(root_dir, subset)
         if debug:
             self.files = self.files[:10]
+        self.neighbours = neighbour_indices([img for img, _ in self.files], context)
 
         print(f">> Created {subset} dataset with {len(self)} images...")
 
@@ -72,7 +98,13 @@ class SliceDataset(Dataset):
     def __getitem__(self, index) -> dict[str, Union[Tensor, int, str]]:
         img_path, gt_path = self.files[index]
 
-        img: Tensor = self.img_transform(Image.open(img_path))
+        img: Tensor
+        if self.context == 0:
+            img = self.img_transform(Image.open(img_path))
+        else:
+            # Stack the neighbouring slices as channels, the current one in the middle
+            img = torch.cat([self.img_transform(Image.open(self.files[j][0]))
+                             for j in self.neighbours[index]], dim=0)
 
         data_dict = {"images": img,
                      "stems": img_path.stem}

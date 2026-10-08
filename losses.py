@@ -23,6 +23,7 @@
 # SOFTWARE.
 
 
+import torch
 from torch import einsum
 
 from utils import simplex, sset
@@ -32,6 +33,9 @@ class CrossEntropy():
     def __init__(self, **kwargs):
         # Self.idk is used to filter out some classes of the target mask. Use fancy indexing
         self.idk = kwargs['idk']
+        # Optional per-class weights, one per class (indexed like the full one-hot target, not like idk)
+        class_weights = kwargs.get('class_weights')
+        self.class_weights = None if class_weights is None else torch.as_tensor(class_weights, dtype=torch.float32)
         print(f"Initialized {self.__class__.__name__} with {kwargs}")
 
     def __call__(self, pred_softmax, weak_target):
@@ -42,6 +46,11 @@ class CrossEntropy():
         log_p = (pred_softmax[:, self.idk, ...] + 1e-10).log()
         mask = weak_target[:, self.idk, ...].float()
 
+        if self.class_weights is not None:
+            w = self.class_weights.to(mask.device)[self.idk]
+            mask = einsum("bkwh,k->bkwh", mask, w)
+
+        # Weighted average over the supervised pixels (plain average when unweighted)
         loss = - einsum("bkwh,bkwh->", mask, log_p)
         loss /= mask.sum() + 1e-10
 
@@ -81,7 +90,7 @@ class CrossEntropyDiceLoss():
         self.ce_weight: float = kwargs.get('ce_weight', 1.0)
         self.dice_weight: float = kwargs.get('dice_weight', 1.0)
 
-        self.ce = CrossEntropy(idk=kwargs['idk'])
+        self.ce = CrossEntropy(idk=kwargs['idk'], class_weights=kwargs.get('class_weights'))
         self.dice = DiceLoss(idk=kwargs['idk'], smooth=kwargs.get('smooth', 1e-8))
         print(f"Initialized {self.__class__.__name__} with {kwargs}")
 

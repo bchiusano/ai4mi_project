@@ -1,0 +1,68 @@
+{
+    "schema": "https://github.com/Project-MONAI/MONAI-extra-test-data/releases/download/0.8.1/meta_schema_20220324.json",
+    "version": "0.1.0",
+    "changelog": {
+        "0.1.0": "UNETR for SegTHOR thoracic organs at risk, adapted from the MONAI segmentation template 0.0.4"
+    },
+    "monai_version": "1.4.0",
+    "pytorch_version": "2.4.0",
+    "numpy_version": "1.24.4",
+    "optional_packages_version": {
+        "nibabel": "5.2.1",
+        "pytorch-ignite": "0.4.11"
+    },
+    "name": "SegTHOR UNETR Segmentation",
+    "task": "3D segmentation of thoracic organs at risk in CT",
+    "description": "UNETR trained on 96x96x96 patches of SegTHOR CT volumes resampled to 1.5x1.5x2.5 mm and windowed to [-1000, 1000] HU. Segments the esophagus, heart, trachea and aorta; whole volumes are segmented with sliding window inference and mapped back to the original CT space.",
+    "authors": "AI4MI project group",
+    "copyright": "Copyright (c) 2023 MONAI Consortium",
+    "network_data_format": {
+        "inputs": {
+            "image": {
+                "type": "image",
+                "format": "hounsfield",
+                "modality": "CT",
+                "num_channels": 1,
+                "spatial_shape": [
+                    96,
+                    96,
+                    96
+                ],
+                "dtype": "float32",
+                "value_range": [
+                    0,
+                    1
+                ],
+                "is_patch_data": true,
+                "channel_def": {
+                    "0": "image"
+                }
+            }
+        },
+        "outputs": {
+            "pred": {
+                "type": "image",
+                "format": "segmentation",
+                "num_channels": 5,
+                "spatial_shape": [
+                    96,
+                    96,
+                    96
+                ],
+                "dtype": "float32",
+                "value_range": [
+                    0,
+                    4
+                ],
+                "is_patch_data": true,
+                "channel_def": {
+                    "0": "background",
+                    "1": "esophagus",
+                    "2": "heart",
+                    "3": "trachea",
+                    "4": "aorta"
+                }
+            }
+        }
+    }
+}

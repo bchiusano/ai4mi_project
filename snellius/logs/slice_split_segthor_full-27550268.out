@@ -1,0 +1,20 @@
+Started: Sun Oct  4 18:01:08 CEST 2026
+Git commit: 32257a554067ad4528ed6ca2df2d32fd7fc0ba8f
+Patients in archive: 40
+Namespace(source_dir='/scratch-shared/scur0010/ai4mi_project/data/segthor_train_full', dest_dir='/scratch-shared/scur0010/ai4mi_project/data/SEGTHOR_FULL_sliced', shape=[256, 256], retains=0, seed=0, fold=0, process=9)
+Founds 40 in the id list
+['Patient_01', 'Patient_02', 'Patient_03', 'Patient_04', 'Patient_05', 'Patient_06', 'Patient_07', 'Patient_08', 'Patient_09', 'Patient_10']
+Founds 0 test ids
+[]
+Slicing 40 pairs to /scratch-shared/scur0010/ai4mi_project/data/SEGTHOR_FULL_sliced/train
+Slicing 0 pairs to /scratch-shared/scur0010/ai4mi_project/data/SEGTHOR_FULL_sliced/val
+Saved spacing dictionnary to <_io.BufferedWriter name='/scratch-shared/scur0010/ai4mi_project/data/SEGTHOR_FULL_sliced/spacing.pkl'>
+40 patients, 7420 slices, 5 folds
+fold_0: 32 train patients (5823 slices), 8 val patients (1597 slices): Patient_01, Patient_05, Patient_08, Patient_09, Patient_12, Patient_16, Patient_33, Patient_38
+fold_1: 32 train patients (5983 slices), 8 val patients (1437 slices): Patient_06, Patient_17, Patient_23, Patient_28, Patient_31, Patient_36, Patient_37, Patient_39
+fold_2: 32 train patients (5938 slices), 8 val patients (1482 slices): Patient_03, Patient_04, Patient_07, Patient_11, Patient_13, Patient_20, Patient_35, Patient_40
+fold_3: 32 train patients (5838 slices), 8 val patients (1582 slices): Patient_02, Patient_14, Patient_22, Patient_24, Patient_26, Patient_27, Patient_29, Patient_34
+fold_4: 32 train patients (6098 slices), 8 val patients (1322 slices): Patient_10, Patient_15, Patient_18, Patient_19, Patient_21, Patient_25, Patient_30, Patient_32
+Saved fold assignment to /scratch-shared/scur0010/ai4mi_project/data/SEGTHOR_FULL_CV/folds.json
+Fold assignment copied to preprocessing/segthor_full_cv_folds.json (commit it to record the split)
+Finished: Sun Oct  4 18:07:25 CEST 2026

@@ -1,0 +1,56 @@
+# Definitions shared by train.yaml, test.yaml and inference.yaml. Always pass this file first, e.g.
+#   --config_file "['configs/common.yaml','configs/train.yaml']"
+# Later files are merged on top of it, so they must not redefine `imports`.
+
+imports:
+- $import os
+- $import glob
+- $import json
+- $import datetime
+- $import torch
+
+# pull out some constants from MONAI
+image: $monai.utils.CommonKeys.IMAGE
+label: $monai.utils.CommonKeys.LABEL
+pred: $monai.utils.CommonKeys.PRED
+
+# SegTHOR labels: 0 background, 1 esophagus, 2 heart, 3 trachea, 4 aorta
+num_classes: 5
+pixdim: [1.5, 1.5, 2.5]  # target voxel spacing in mm; SegTHOR is ~0.98 x 0.98 x 2.5 natively
+roi_size: [96, 96, 96]  # UNETR patch size; also the sliding window size at inference
+hu_window: [-1000, 1000]  # CT intensity window mapped to [0, 1], same as the 2D preprocessing
+device: $torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
+# define various paths
+bundle_root: .  # root directory of the bundle (models/segmentation_template)
+project_root: '$os.path.abspath(os.path.join(@bundle_root, ''..'', ''..''))'
+# folder with one Patient_XX/ per patient holding Patient_XX.nii.gz and GT.nii.gz
+# (unzip data/segthor_train_full.zip into data/segthor_train_full)
+data_root: '$os.path.join(@project_root, ''data'', ''segthor_train_full'', ''train'')'
+folds_file: '$os.path.join(@project_root, ''preprocessing'', ''segthor_full_cv_folds.json'')'
+fold: 0  # cross-validation fold of folds_file to train on / evaluate
+ckpt_path: '$os.path.join(@bundle_root, ''models'', ''model.pt'')'  # checkpoint to load
+
+network_def:
+  _target_: UNETR
+  in_channels: 1
+  out_channels: '@num_classes'
+  img_size: '@roi_size'
+  feature_size: 16
+  hidden_size: 768
+  mlp_dim: 3072
+  num_heads: 12
+  proj_type: conv
+  norm_name: instance
+  res_block: true
+  dropout_rate: 0.0
+network: $@network_def.to(@device)
+
+# whole volumes are larger than the patch size the network was built for, so they are
+# segmented patch by patch and the overlapping predictions are blended
+sw_inferer:
+  _target_: SlidingWindowInferer
+  roi_size: '@roi_size'
+  sw_batch_size: 4
+  overlap: 0.5
+  mode: gaussian

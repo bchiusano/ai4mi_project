@@ -7,7 +7,9 @@ import numpy as np
 from PIL import Image
 import torch
 
+from data_loading.dataset import neighbour_indices
 from models.ENet import ENet
+from models.ENet_25D import ENet_25D
 
 
 def main() -> None:
@@ -16,6 +18,8 @@ def main() -> None:
     parser.add_argument("--image-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--context", type=int, default=0,
+                        help="Neighbouring slices on each side used at training time (2.5D, ENet_25D)")
     args = parser.parse_args()
 
     image_paths = sorted(args.image_dir.glob("*.png"))
@@ -28,19 +32,30 @@ def main() -> None:
         )
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    model = ENet(1, 5, kernels=8, factor=2)
+    if args.context > 0:
+        model = ENet_25D(2 * args.context + 1, 5, kernels=8, factor=2)
+    else:
+        model = ENet(1, 5, kernels=8, factor=2)
     state_dict = torch.load(args.weights, map_location="cpu", weights_only=True)
     model.load_state_dict(state_dict)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
     model.eval()
+
+    neighbours = neighbour_indices(image_paths, args.context)
+
+    def load(path: Path) -> np.ndarray:
+        return np.asarray(Image.open(path).convert("L"), dtype=np.float32) / 255.0
 
     with torch.inference_mode():
         for start in range(0, len(image_paths), args.batch_size):
             batch_paths = image_paths[start:start + args.batch_size]
+            # One (2 * context + 1, H, W) stack per slice, the slice itself in the middle
             arrays = [
-                np.asarray(Image.open(path).convert("L"), dtype=np.float32) / 255.0
-                for path in batch_paths
+                np.stack([load(image_paths[j]) for j in neighbours[i]])
+                for i in range(start, start + len(batch_paths))
             ]
-            images = torch.from_numpy(np.stack(arrays)[:, None, :, :])
+            images = torch.from_numpy(np.stack(arrays)).to(device)
             predictions = model(images).argmax(dim=1).cpu().numpy().astype(np.uint8)
             for path, prediction in zip(batch_paths, predictions):
                 Image.fromarray(prediction * 63).save(args.output_dir / path.name)
