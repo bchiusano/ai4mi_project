@@ -23,8 +23,8 @@
 # SOFTWARE.
 
 import argparse
+import json
 import os
-import random
 import warnings
 from typing import Any
 from pathlib import Path
@@ -33,7 +33,6 @@ from operator import itemgetter
 from shutil import copytree, rmtree
 
 import torch
-import wandb
 import numpy as np
 import torch.nn.functional as F
 from PIL import Image
@@ -44,6 +43,11 @@ from torch.utils.data import DataLoader
 from functools import partial 
 
 from data_loading.dataset import SliceDataset
+from data_loading.reproducibility import (
+    data_loader_generator,
+    seed_data_loader_worker,
+    seed_everything,
+)
 from models.ShallowNet import shallowCNN
 from models.ENet import ENet
 from models.ENet_25D import ENet_25D
@@ -68,7 +72,7 @@ datasets_params["TOY2"] = {'K': 2, 'net': shallowCNN, 'B': 2, 'kernels': 8, 'fac
 datasets_params["SEGTHOR"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 datasets_params["SEGTHOR_CLEAN"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 datasets_params["SEGTHOR_CORRECTED"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
-# Full 40-patient training set, one folder per cross-validation fold (pass it with --data-dir)
+# Full 40-patient training set; other folders (CV folds, fixed splits) can be passed with --data-dir
 datasets_params["SEGTHOR_FULL"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 
 def img_transform(img):
@@ -120,19 +124,8 @@ def compute_class_weights(spec: str, gt_paths: list[Path], K: int) -> list[float
         return weights.tolist()
 
 
-def set_seed(seed: int) -> None:
-        """Seed Python, NumPy and PyTorch (CPU and GPU) for repeatable weight init, shuffling and dropout.
-
-        GPU kernels are not forced to be deterministic, so runs repeat closely but not always bit for bit.
-        """
-        random.seed(seed)
-        np.random.seed(seed)
-        torch.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
-
-
 def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
-    set_seed(args.seed)
+    seed_everything(args.seed)
 
     # Networks and scheduler
     gpu: bool = args.gpu and torch.cuda.is_available()
@@ -158,19 +151,19 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
     B: int = datasets_params[args.dataset]['B']
     root_dir = args.data_dir if args.data_dir else Path("data") / args.dataset
 
-
-
     train_set = SliceDataset('train',
                              root_dir,
                              img_transform=img_transform,
                              gt_transform= partial(gt_transform, K),
                              debug=args.debug,
                              context=args.context)
+    train_generator = data_loader_generator(args.seed)
     train_loader = DataLoader(train_set,
                               batch_size=B,
                               num_workers=5,
                               shuffle=True,
-                              generator=torch.Generator().manual_seed(args.seed))  # Same slice order per seed
+                              worker_init_fn=seed_data_loader_worker,
+                              generator=train_generator)
 
     val_set = SliceDataset('val',
                            root_dir,
@@ -181,7 +174,9 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
     val_loader = DataLoader(val_set,
                             batch_size=B,
                             num_workers=5,
-                            shuffle=False)
+                            shuffle=False,
+                            worker_init_fn=seed_data_loader_worker,
+                            generator=data_loader_generator(args.seed + 1))
 
     args.dest.mkdir(parents=True, exist_ok=True)
 
@@ -189,6 +184,13 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
 
 
 def runTraining(args):
+    try:
+        import wandb
+    except ModuleNotFoundError as error:
+        raise RuntimeError(
+            "Training logging requires wandb; install the project requirements first."
+        ) from error
+
     print(f">>> Setting up to train on {args.dataset} with {args.mode}")
     net, optimizer, device, train_loader, val_loader, K = setup(args)
 
@@ -198,13 +200,37 @@ def runTraining(args):
                                           [gt_path for _, gt_path in train_loader.dataset.files],
                                           K)
 
+    root_dir = args.data_dir if args.data_dir else Path("data") / args.dataset
+    split_path = root_dir / "split.json"
+    split_metadata = (
+        json.loads(split_path.read_text(encoding="utf-8"))
+        if split_path.is_file()
+        else None
+    )
+    run_metadata = {
+        **{
+            name: str(value) if isinstance(value, Path) else value
+            for name, value in vars(args).items()
+        },
+        "torch_version": torch.__version__,
+        "cuda_version": torch.version.cuda,
+        "cudnn_version": torch.backends.cudnn.version(),
+        "device": str(device),
+        "split_seed": split_metadata.get("seed") if split_metadata else None,
+        "test_patients": split_metadata.get("test") if split_metadata else None,
+        "ce_class_weights": class_weights,
+    }
+    (args.dest / "run_config.json").write_text(
+        json.dumps(run_metadata, indent=2), encoding="utf-8"
+    )
+
     wandb_run = wandb.init(
         project=os.environ.get("WANDB_PROJECT", "ai4mi-segthor"),
         entity=os.environ.get("WANDB_ENTITY"),
         name=os.environ.get("WANDB_RUN_NAME", f"{args.dataset}-{args.loss}"),
         group=os.environ.get("WANDB_RUN_GROUP"),
         mode=os.environ.get("WANDB_MODE", "online"),
-        config=vars(args) | {"classes": K, "device": str(device), "ce_class_weights": class_weights},
+        config=run_metadata | {"classes": K},
     )
 
     if args.mode == "full":
@@ -397,7 +423,7 @@ def main():
     parser.add_argument('--epochs', default=20, type=int)
     parser.add_argument('--dataset', default='TOY2', choices=datasets_params.keys())
     parser.add_argument('--mode', default='full', choices=['partial', 'full'])
-    parser.add_argument('--loss', default='ce', choices=list(LOSSES.keys()),
+    parser.add_argument('--loss', default='ce_dice', choices=list(LOSSES.keys()),
                         help="Loss function to use for training.")
     parser.add_argument('--seed', default=0, type=int,
                         help="Random seed for weight initialization, data shuffling and dropout.")

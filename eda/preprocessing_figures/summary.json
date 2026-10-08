@@ -1,0 +1,18 @@
+{
+  "patients": 40,
+  "archive_sha256": "53e99dfb45234a9ed4ac573db767cb5e3179da209c6a5bf1ddc999bce03f4e51",
+  "spacing_x_range_mm": [
+    0.8964840173721313,
+    1.3671879768371582
+  ],
+  "spacing_z_values_mm": [
+    2.0,
+    2.5
+  ],
+  "fov_384_min_retained_percent": 100.0,
+  "current_zero_hu_uint8_range": [
+    7.787924136456647,
+    91.792656587473
+  ],
+  "fixed_zero_hu_uint8": 127.5
+}

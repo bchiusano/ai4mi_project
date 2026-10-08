@@ -7,7 +7,7 @@ import numpy as np
 from PIL import Image
 import torch
 
-from data_loading.dataset import neighbour_indices
+from data_loading.dataset import make_dataset, neighbour_indices
 from models.ENet import ENet
 from models.ENet_25D import ENet_25D
 
@@ -15,14 +15,21 @@ from models.ENet_25D import ENet_25D
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate SegTHOR masks from saved ENet weights")
     parser.add_argument("--weights", type=Path, required=True)
-    parser.add_argument("--image-dir", type=Path, required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--image-dir", type=Path, help="Legacy directory containing PNG images.")
+    source.add_argument("--data-dir", type=Path, help="Preprocessed dataset with split.json.")
+    parser.add_argument("--subset", choices=["train", "val", "test"], default="test")
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--gpu", action="store_true")
     parser.add_argument("--context", type=int, default=0,
                         help="Neighbouring slices on each side used at training time (2.5D, ENet_25D)")
     args = parser.parse_args()
 
-    image_paths = sorted(args.image_dir.glob("*.png"))
+    if args.data_dir is not None:
+        image_paths = [path for path, _ in make_dataset(args.data_dir, args.subset)]
+    else:
+        image_paths = sorted(args.image_dir.glob("*.png"))
     if not image_paths:
         raise RuntimeError(f"No PNG images found in {args.image_dir}")
     existing = list(args.output_dir.glob("*.png")) if args.output_dir.exists() else []
@@ -36,9 +43,9 @@ def main() -> None:
         model = ENet_25D(2 * args.context + 1, 5, kernels=8, factor=2)
     else:
         model = ENet(1, 5, kernels=8, factor=2)
-    state_dict = torch.load(args.weights, map_location="cpu", weights_only=True)
+    device = torch.device("cuda" if args.gpu and torch.cuda.is_available() else "cpu")
+    state_dict = torch.load(args.weights, map_location=device, weights_only=True)
     model.load_state_dict(state_dict)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
     model.eval()
 

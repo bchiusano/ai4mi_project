@@ -150,7 +150,8 @@ if [[ -d "$DATA_DIR/test/img" ]]; then
         --weights "$RUN_DIR/bestweights.pt" \
         --image-dir "$DATA_DIR/test/img" \
         --output-dir "$RUN_DIR/best_epoch/test" \
-        --context "$CONTEXT"
+        --context "$CONTEXT" \
+        --gpu
     python -m evaluation.evaluate_saved_predictions \
         --pred-dir "$RUN_DIR/best_epoch/test" \
         --gt-dir "$DATA_DIR/test/gt" \

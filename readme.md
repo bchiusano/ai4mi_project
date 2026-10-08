@@ -123,10 +123,10 @@ You can also create new conda environment in anaconda prompt
 
 <a id="getting-the-data"></a>
 ### Getting the data
-The synthetic dataset is generated randomly, whereas for Segthor it is required to put the file [`segthor_part1.zip`](https://amsuni-my.sharepoint.com/:u:/g/personal/h_t_g_kervadec_uva_nl/IQBJLXRY5wedSYEuofqRtuylAWiiHp2ciems5XSCu3DFMkA?e=qa3Ujf) (required a UvA account) in the `data/` folder. If the computer running it is powerful enough, the recipe for `data/SEGTHOR` can be modified in the [Makefile](Makefile) to enable multi-processing (`-p -1` option, see `python -m preprocessing.slice_segthor --help` or its code directly).
+The synthetic dataset is generated randomly. For SegTHOR, put [`segthor_train_full.zip`](https://amsuni-my.sharepoint.com/:u:/g/personal/h_t_g_kervadec_uva_nl/IQAdjIjKmc4XRbIBQl9qeBs8AXOF-9Evw0v_lEbvLn2mUdE?e=lZev9Z) (requires a UvA account) in the `data/` folder. The full-data recipe verifies and extracts the archive and creates one deterministic patient-level split: 28 training, 6 validation, and 6 labelled test patients. The test patients are sampled only from Patients 21–40 because Patients 1–20 were already used in preliminary experiments and are no longer an untouched test pool. Preprocessing clips intensities to `[-1000, 1000]` HU, takes a centred 384 mm field of view, and resamples it to 384x384 at approximately 1.0 mm in-plane spacing. This matches the native spacing of 36 of the 40 scans much more closely than the old 1.5 mm baseline. Each patient is preprocessed only once; `split.json` records the direct train/validation/test assignment. Split and transformation metadata are saved with the generated PNGs. Use `-p -1` to enable all available CPU cores (see `python -m preprocessing.slice_segthor --help`).
 ```
 $ make data/TOY2
-$ make data/SEGTHOR
+$ make data/SEGTHOR_FULL
 ```
 
 
@@ -136,31 +136,35 @@ $ rm -rf data/TOY2_tmp data/TOY2
 $ python examples/gen_two_circles.py --dest data/TOY2_tmp -n 1000 100 -r 25 -wh 256 256
 $ mv data/TOY2_tmp data/TOY2
 
-$ sha256sum -c data/segthor_train.sha256
-$ unzip -q data/segthor_train.zip
+$ sha256sum -c data/segthor_train_full.sha256
+$ mkdir data/segthor_train_full
+$ unzip -q data/segthor_train_full.zip -d data/segthor_train_full
 
-$ rm -rf data/SEGTHOR_tmp data/SEGTHOR
-$ python -m preprocessing.slice_segthor --source_dir data/segthor_train --dest_dir data/SEGTHOR_tmp \
-         --shape 256 256 --retain 10
-$ mv data/SEGTHOR_tmp data/SEGTHOR
-````
+$ python -m preprocessing.slice_segthor \
+         --source_dir data/segthor_train_full \
+         --dest_dir data/SEGTHOR_FULL \
+         --shape 384 384 --target-spacing 1.0 1.0 \
+         --window -1000 1000 --validation-count 6 --test-count 6 \
+         --test-pool-start 21 --split-seed 0
+$ python -m preprocessing.validate_processed_segthor data/SEGTHOR_FULL
+```
+
+The patient split seed is fixed at `0`. Training seeds control initialization
+and data-loader shuffling without changing patient membership. The selected
+preprocessing is architecture-independent; peer models can reuse
+`SliceDataset(...)` and the same `split.json`. See
+[`preprocessing/README.md`](preprocessing/README.md) for the exact processing,
+output format, validation, and sharing instructions.
+
+Patients 1–20 in the full archive are the same CT scans as the earlier partial dataset. Use the official full-dataset masks rather than appending the corrected partial dataset, which would duplicate patients across the cohort.
 
 <a id="training-a-base-network"></a>
 ### Training a base network
 Running a training
 ```
 $ python main.py --help
-usage: main.py [-h] [--epochs EPOCHS] [--dataset {TOY2,SEGTHOR}] [--mode {partial,full}] --dest DEST [--gpu] [--debug]
-
-options:
-  -h, --help            show this help message and exit
-  --epochs EPOCHS
-  --dataset {TOY2,SEGTHOR}
-  --mode {partial,full}
-  --dest DEST           Destination directory to save the results (predictions and weights).
-  --gpu
-  --debug               Keep only a fraction (10 samples) of the datasets, to test the logic around epochs and logging easily.
-$ python main.py --dataset TOY2 --mode full --epoch 25 --dest results/toy2/ce --gpu
+$ python main.py --dataset SEGTHOR_FULL --mode full --loss ce_dice \
+    --seed 0 --epochs 25 --dest results/segthor_full/seed0 --gpu
 ```
 
 The codebase uses a lot of assertions for control and self-documentation, they can easily be disabled with the `-O` option (for faster training) once everything is known to be correct (for instance run the previous command for 1/2 epochs, then kill it and relaunch it):
