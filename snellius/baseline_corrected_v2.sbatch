@@ -64,7 +64,6 @@ python -m preprocessing.slice_segthor \
     --shape 256 256 \
     --retains 5 \
     --seed 0 \
-    --fold 0 \
     --process 8
 
 train_count=$(find "$SLICED_V2/train/img" -type f -name '*.png' | wc -l)

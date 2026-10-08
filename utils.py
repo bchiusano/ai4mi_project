@@ -30,6 +30,7 @@ from typing import Callable, Iterable, List, Set, Tuple, TypeVar, cast
 
 import torch
 import numpy as np
+from scipy import ndimage
 from PIL import Image
 from tqdm import tqdm
 from torch import Tensor, einsum
@@ -154,6 +155,68 @@ def meta_dice(sum_str: str, label: Tensor, pred: Tensor, smooth: float = 1e-8) -
 
 dice_coef = partial(meta_dice, "bk...->bk")
 dice_batch = partial(meta_dice, "bk...->k")  # used for 3d dice
+
+
+def surface_hd95(
+    pred: np.ndarray,
+    target: np.ndarray,
+    spacing: Iterable[float] | None = None,
+) -> float:
+    """Return the symmetric 95th-percentile surface distance.
+
+    ``pred`` and ``target`` are binary masks of the same dimensionality.  The
+    metric is computed between boundary voxels, rather than all foreground
+    voxels.  Supplying physical voxel spacing makes the result a distance in
+    the same units as that spacing (millimetres for SegTHOR).
+
+    A class absent from both masks is not an evaluable case and returns NaN.  A
+    class present in only one mask is a complete miss and returns infinity.
+    """
+    pred_mask = np.asarray(pred, dtype=bool)
+    target_mask = np.asarray(target, dtype=bool)
+    if pred_mask.shape != target_mask.shape:
+        raise ValueError(
+            f"Prediction and target shapes differ: {pred_mask.shape} != "
+            f"{target_mask.shape}"
+        )
+    if pred_mask.ndim < 2:
+        raise ValueError("HD95 expects a 2D or 3D mask")
+
+    if not pred_mask.any() and not target_mask.any():
+        return float("nan")
+    if not pred_mask.any() or not target_mask.any():
+        return float("inf")
+
+    if spacing is None:
+        voxel_spacing = np.ones(pred_mask.ndim, dtype=np.float64)
+    else:
+        voxel_spacing = np.asarray(tuple(spacing), dtype=np.float64)
+        if voxel_spacing.shape != (pred_mask.ndim,):
+            raise ValueError(
+                f"Expected {pred_mask.ndim} spacing values, got "
+                f"{voxel_spacing.size}"
+            )
+        if not np.all(np.isfinite(voxel_spacing)) or np.any(voxel_spacing <= 0):
+            raise ValueError(f"Spacing must contain positive finite values: {spacing}")
+
+    connectivity = ndimage.generate_binary_structure(pred_mask.ndim, 1)
+    pred_surface = pred_mask ^ ndimage.binary_erosion(
+        pred_mask, structure=connectivity, border_value=0
+    )
+    target_surface = target_mask ^ ndimage.binary_erosion(
+        target_mask, structure=connectivity, border_value=0
+    )
+
+    distance_to_target = ndimage.distance_transform_edt(
+        ~target_surface, sampling=voxel_spacing
+    )
+    distance_to_pred = ndimage.distance_transform_edt(
+        ~pred_surface, sampling=voxel_spacing
+    )
+    symmetric_surface_distances = np.concatenate(
+        (distance_to_target[pred_surface], distance_to_pred[target_surface])
+    )
+    return float(np.percentile(symmetric_surface_distances, 95))
 
 
 def patient_id_from_stem(stem: str) -> str:

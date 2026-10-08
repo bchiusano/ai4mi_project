@@ -9,13 +9,22 @@ import torch
 from PIL import Image
 
 from evaluation.evaluate_saved_epochs import discover_epochs
-from evaluation.evaluate_saved_predictions import evaluate_prediction_directory
+from evaluation.evaluate_saved_predictions import (
+    evaluate_hd95_directory,
+    evaluate_prediction_directory,
+)
 from losses import CrossEntropy, CrossEntropyDiceLoss, DiceLoss
+from utils import (
+    PatientVolumeDice,
+    class2one_hot,
+    dice_coef,
+    patient_id_from_stem,
+    surface_hd95,
+)
 from postprocessing.connected_compontents import (
     keep_largest_component,
     select_improving_classes,
 )
-from utils import PatientVolumeDice, class2one_hot, dice_coef, patient_id_from_stem
 
 
 class LossTests(unittest.TestCase):
@@ -89,6 +98,27 @@ class PatientVolumeDiceTests(unittest.TestCase):
         self.assertTrue(torch.isnan(volume_dice[0, 1]))
 
 
+class SurfaceHD95Tests(unittest.TestCase):
+    def test_perfect_masks_have_zero_hd95(self):
+        mask = np.zeros((5, 5, 5), dtype=bool)
+        mask[1:4, 1:4, 1:4] = True
+        self.assertEqual(surface_hd95(mask, mask, (1.0, 1.0, 2.5)), 0.0)
+
+    def test_hd95_uses_physical_spacing(self):
+        target = np.zeros((3, 3, 3), dtype=bool)
+        prediction = np.zeros_like(target)
+        target[1, 1, 0] = True
+        prediction[1, 1, 1] = True
+        self.assertEqual(surface_hd95(prediction, target, (1.0, 1.0, 2.5)), 2.5)
+
+    def test_empty_mask_semantics(self):
+        empty = np.zeros((3, 3, 3), dtype=bool)
+        present = empty.copy()
+        present[1, 1, 1] = True
+        self.assertTrue(np.isnan(surface_hd95(empty, empty)))
+        self.assertTrue(np.isinf(surface_hd95(empty, present)))
+
+
 class SavedPredictionEvaluationTests(unittest.TestCase):
     @staticmethod
     def save_mask(path: Path, labels: np.ndarray) -> None:
@@ -113,6 +143,31 @@ class SavedPredictionEvaluationTests(unittest.TestCase):
             )
             self.assertEqual(patients, ["Patient_01"])
             self.assertAlmostEqual(dice[0, 1], 0.0, places=6)
+
+    def test_saved_predictions_use_3d_spacing_for_hd95(self):
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            pred_dir = root / "pred"
+            gt_dir = root / "gt"
+            empty = np.zeros((3, 3), dtype=np.uint8)
+            target_0 = empty.copy()
+            target_0[1, 1] = 1
+            pred_1 = empty.copy()
+            pred_1[1, 1] = 1
+
+            self.save_mask(gt_dir / "Patient_01_0000.png", target_0)
+            self.save_mask(gt_dir / "Patient_01_0001.png", empty)
+            self.save_mask(pred_dir / "Patient_01_0000.png", empty)
+            self.save_mask(pred_dir / "Patient_01_0001.png", pred_1)
+
+            patients, hd95, _ = evaluate_hd95_directory(
+                pred_dir,
+                gt_dir,
+                {"Patient_01": (1.0, 1.0, 3.0)},
+                classes=2,
+            )
+            self.assertEqual(patients, ["Patient_01"])
+            self.assertEqual(hd95[0, 1], 3.0)
 
     def test_epoch_discovery_is_numeric_and_requires_prediction_split(self):
         with TemporaryDirectory() as temporary_directory:

@@ -14,6 +14,7 @@ import numpy as np
 from evaluation.evaluate_saved_predictions import (
     ORGAN_NAMES,
     evaluate_prediction_directory,
+    patient_ids_from_split,
 )
 
 
@@ -21,11 +22,11 @@ EPOCH_PATTERN = re.compile(r"^iter(\d+)$")
 
 
 def evaluate_epoch(
-    task: tuple[int, Path, Path, int, float],
+    task: tuple[int, Path, Path, int, float, set[str] | None],
 ) -> tuple[int, list[str], np.ndarray, list[dict[str, object]]]:
-    epoch, pred_dir, gt_dir, classes, label_step = task
+    epoch, pred_dir, gt_dir, classes, label_step, expected_patient_ids = task
     patients, dice, detailed_rows = evaluate_prediction_directory(
-        pred_dir, gt_dir, classes, label_step
+        pred_dir, gt_dir, classes, label_step, expected_patient_ids
     )
     return epoch, patients, dice, detailed_rows
 
@@ -66,6 +67,11 @@ def main() -> None:
     parser.add_argument("--classes", type=int, default=5)
     parser.add_argument("--label-step", type=float, default=63.0)
     parser.add_argument(
+        "--split-file",
+        type=Path,
+        help="split.json; required when --gt-dir is the pooled label directory.",
+    )
+    parser.add_argument(
         "--workers",
         type=int,
         default=1,
@@ -75,6 +81,11 @@ def main() -> None:
     if args.workers < 1:
         parser.error("--workers must be at least 1")
 
+    expected_patient_ids = (
+        patient_ids_from_split(args.split_file, args.split)
+        if args.split_file is not None
+        else None
+    )
     epochs = discover_epochs(args.run_dir, args.split)
     expected_epoch_numbers = list(range(epochs[0][0], epochs[-1][0] + 1))
     actual_epoch_numbers = [epoch for epoch, _ in epochs]
@@ -89,7 +100,7 @@ def main() -> None:
     expected_patients: list[str] | None = None
 
     tasks = [
-        (epoch, pred_dir, args.gt_dir, args.classes, args.label_step)
+        (epoch, pred_dir, args.gt_dir, args.classes, args.label_step, expected_patient_ids)
         for epoch, pred_dir in epochs
     ]
     if args.workers == 1:

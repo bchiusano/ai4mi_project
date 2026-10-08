@@ -23,6 +23,7 @@
 # SOFTWARE.
 
 import argparse
+import json
 import os
 import warnings
 from typing import Any
@@ -32,9 +33,9 @@ from operator import itemgetter
 from shutil import copytree, rmtree
 
 import torch
-import wandb
 import numpy as np
 import torch.nn.functional as F
+from PIL import Image
 from torch import nn, Tensor
 from torchvision import transforms
 from torch.utils.data import DataLoader
@@ -42,8 +43,14 @@ from torch.utils.data import DataLoader
 from functools import partial 
 
 from data_loading.dataset import SliceDataset
+from data_loading.reproducibility import (
+    data_loader_generator,
+    seed_data_loader_worker,
+    seed_everything,
+)
 from models.ShallowNet import shallowCNN
 from models.ENet import ENet
+from models.ENet_25D import ENet_25D
 from utils import (Dcm,
                    class2one_hot,
                    probs2one_hot,
@@ -65,6 +72,8 @@ datasets_params["TOY2"] = {'K': 2, 'net': shallowCNN, 'B': 2, 'kernels': 8, 'fac
 datasets_params["SEGTHOR"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 datasets_params["SEGTHOR_CLEAN"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 datasets_params["SEGTHOR_CORRECTED"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
+# Full 40-patient training set; other folders (CV folds, fixed splits) can be passed with --data-dir
+datasets_params["SEGTHOR_FULL"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 
 def img_transform(img):
         img = img.convert('L')
@@ -84,7 +93,40 @@ def gt_transform(K, img):
         img = class2one_hot(img, K=K)
         return img[0]
 
+def compute_class_weights(spec: str, gt_paths: list[Path], K: int) -> list[float] | None:
+        """Per-class weights for the cross-entropy, from a --class-weights value.
+
+        'none': no weighting. 'inv' / 'sqrt_inv': inverse (square root) of the pixel
+        frequency of each class in the given ground truths. Otherwise a comma-separated
+        list of K numbers. Computed weights are normalized to average to 1.
+        """
+        if spec == 'none':
+                return None
+
+        if spec in ['inv', 'sqrt_inv']:
+                counts = torch.zeros(K, dtype=torch.float64)
+                for gt_path in gt_paths:
+                        counts += gt_transform(K, Image.open(gt_path)).sum(dim=(1, 2))
+                if (counts == 0).any():
+                        raise ValueError(f"Some classes never appear in the ground truth: {counts.tolist()}")
+
+                weights = counts.sum() / counts
+                if spec == 'sqrt_inv':
+                        weights = weights.sqrt()
+                weights = weights / weights.mean()
+                print(f">> Class pixel frequencies: {(counts / counts.sum()).tolist()}")
+        else:
+                weights = torch.tensor([float(w) for w in spec.split(',')])
+                if len(weights) != K:
+                        raise ValueError(f"--class-weights needs {K} values, got {len(weights)}: {spec}")
+
+        print(f">> Cross-entropy class weights: {weights.tolist()}")
+        return weights.tolist()
+
+
 def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
+    seed_everything(args.seed)
+
     # Networks and scheduler
     gpu: bool = args.gpu and torch.cuda.is_available()
     device = torch.device("cuda") if gpu else torch.device("cpu")
@@ -93,38 +135,48 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
     K: int = datasets_params[args.dataset]['K']
     kernels: int = datasets_params[args.dataset]['kernels'] if 'kernels' in datasets_params[args.dataset] else 8
     factor: int = datasets_params[args.dataset]['factor'] if 'factor' in datasets_params[args.dataset] else 2
-    net = datasets_params[args.dataset]['net'](1, K, kernels=kernels, factor=factor)
+    in_dim: int = 2 * args.context + 1  # Current slice plus its neighbours on each side (2.5D)
+    net_class = datasets_params[args.dataset]['net']
+    if args.context > 0:
+        if net_class is not ENet:
+            raise ValueError(f"--context > 0 (2.5D input) is only supported with ENet, not {net_class.__name__}")
+        net_class = ENet_25D
+    net = net_class(in_dim, K, kernels=kernels, factor=factor)
     net.init_weights()
     net.to(device)
 
-    lr = 0.0005
-    optimizer = torch.optim.Adam(net.parameters(), lr=lr, betas=(0.9, 0.999))
+    optimizer = torch.optim.Adam(net.parameters(), lr=args.lr, betas=(0.9, 0.999))
 
     # Dataset part
     B: int = datasets_params[args.dataset]['B']
-    root_dir = Path("data") / args.dataset
-
-
+    root_dir = args.data_dir if args.data_dir else Path("data") / args.dataset
 
     train_set = SliceDataset('train',
                              root_dir,
                              img_transform=img_transform,
                              gt_transform= partial(gt_transform, K),
-                             debug=args.debug)
+                             debug=args.debug,
+                             context=args.context)
+    train_generator = data_loader_generator(args.seed)
     train_loader = DataLoader(train_set,
                               batch_size=B,
                               num_workers=5,
-                              shuffle=True)
+                              shuffle=True,
+                              worker_init_fn=seed_data_loader_worker,
+                              generator=train_generator)
 
     val_set = SliceDataset('val',
                            root_dir,
                            img_transform=img_transform,
                            gt_transform=partial(gt_transform, K),
-                           debug=args.debug)
+                           debug=args.debug,
+                           context=args.context)
     val_loader = DataLoader(val_set,
                             batch_size=B,
                             num_workers=5,
-                            shuffle=False)
+                            shuffle=False,
+                            worker_init_fn=seed_data_loader_worker,
+                            generator=data_loader_generator(args.seed + 1))
 
     args.dest.mkdir(parents=True, exist_ok=True)
 
@@ -132,8 +184,45 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
 
 
 def runTraining(args):
+    try:
+        import wandb
+    except ModuleNotFoundError as error:
+        raise RuntimeError(
+            "Training logging requires wandb; install the project requirements first."
+        ) from error
+
     print(f">>> Setting up to train on {args.dataset} with {args.mode}")
     net, optimizer, device, train_loader, val_loader, K = setup(args)
+
+    if args.class_weights != 'none' and args.loss == 'dice':
+        raise ValueError("--class-weights only applies to the cross-entropy, so it cannot be used with --loss dice")
+    class_weights = compute_class_weights(args.class_weights,
+                                          [gt_path for _, gt_path in train_loader.dataset.files],
+                                          K)
+
+    root_dir = args.data_dir if args.data_dir else Path("data") / args.dataset
+    split_path = root_dir / "split.json"
+    split_metadata = (
+        json.loads(split_path.read_text(encoding="utf-8"))
+        if split_path.is_file()
+        else None
+    )
+    run_metadata = {
+        **{
+            name: str(value) if isinstance(value, Path) else value
+            for name, value in vars(args).items()
+        },
+        "torch_version": torch.__version__,
+        "cuda_version": torch.version.cuda,
+        "cudnn_version": torch.backends.cudnn.version(),
+        "device": str(device),
+        "split_seed": split_metadata.get("seed") if split_metadata else None,
+        "test_patients": split_metadata.get("test") if split_metadata else None,
+        "ce_class_weights": class_weights,
+    }
+    (args.dest / "run_config.json").write_text(
+        json.dumps(run_metadata, indent=2), encoding="utf-8"
+    )
 
     wandb_run = wandb.init(
         project=os.environ.get("WANDB_PROJECT", "ai4mi-segthor"),
@@ -141,7 +230,7 @@ def runTraining(args):
         name=os.environ.get("WANDB_RUN_NAME", f"{args.dataset}-{args.loss}"),
         group=os.environ.get("WANDB_RUN_GROUP"),
         mode=os.environ.get("WANDB_MODE", "online"),
-        config=vars(args) | {"classes": K, "device": str(device)},
+        config=run_metadata | {"classes": K},
     )
 
     if args.mode == "full":
@@ -151,7 +240,16 @@ def runTraining(args):
     else:
         raise ValueError(args.mode, args.dataset)
 
-    loss_fn = LOSSES[args.loss](idk=idk)
+    loss_fn = LOSSES[args.loss](idk=idk) if class_weights is None \
+        else LOSSES[args.loss](idk=idk, class_weights=class_weights)
+
+    scheduler: Any = None
+    if args.lr_scheduler == 'plateau':
+        # Lower the learning rate when the validation 3D dice (the early stopping metric) stalls
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max',
+                                                               factor=args.lr_factor,
+                                                               patience=args.lr_patience,
+                                                               min_lr=args.min_lr)
 
     # Notice one has the length of the _loader_, and the other one of the _dataset_
     log_loss_tra: Tensor = torch.full((args.epochs, len(train_loader)), float("nan"))
@@ -162,10 +260,12 @@ def runTraining(args):
     val_patient_ids = sorted({patient_id_from_stem(img_path.stem)
                               for img_path, _ in val_loader.dataset.files})
     log_dice3d_val: Tensor = torch.full((args.epochs, len(val_patient_ids), K), float("nan"))
+    log_lr: Tensor = torch.full((args.epochs,), float("nan"))  # Learning rate used in each epoch
     with open(args.dest / "dice3d_val_patients.txt", "w") as f:
         f.write("\n".join(val_patient_ids) + "\n")
 
     best_dice: float = float("-inf")
+    epochs_without_improvement: int = 0
 
     for e in range(args.epochs):
         patient_dice = PatientVolumeDice(K)
@@ -259,6 +359,7 @@ def runTraining(args):
             "validation/loss": torch.nanmean(log_loss_val[e]).item(),
             "validation/slice_dice": torch.nanmean(log_dice_val[e, :, 1:]).item(),
             "validation/3d_dice": current_dice,
+            "lr": optimizer.param_groups[0]['lr'],
         }
         epoch_metrics |= {
             f"validation/3d_dice_class_{k}": organ_scores[k - 1].item()
@@ -273,6 +374,8 @@ def runTraining(args):
         np.save(args.dest / "loss_val.npy", log_loss_val)
         np.save(args.dest / "dice_val.npy", log_dice_val)
         np.save(args.dest / "dice3d_val.npy", log_dice3d_val)
+        log_lr[e] = optimizer.param_groups[0]['lr']
+        np.save(args.dest / "lr.npy", log_lr)
 
         if current_dice > best_dice:
             if np.isfinite(best_dice):
@@ -292,6 +395,24 @@ def runTraining(args):
 
             torch.save(net, args.dest / "bestmodel.pkl")
             torch.save(net.state_dict(), args.dest / "bestweights.pt")
+            epochs_without_improvement = 0
+        else:
+            epochs_without_improvement += 1
+
+        if scheduler is not None:
+            previous_lr = optimizer.param_groups[0]['lr']
+            scheduler.step(current_dice)
+            if optimizer.param_groups[0]['lr'] < previous_lr:
+                print(f">>> Lowered learning rate at epoch {e}: {previous_lr:.2e}->{optimizer.param_groups[0]['lr']:.2e}")
+
+        if args.patience and epochs_without_improvement >= args.patience:
+            message = (f">>> Early stopping at epoch {e}: no improvement of the patient-level 3D dice "
+                       f"for {args.patience} epochs (best {best_dice:05.3f})")
+            print(message)
+            with open(args.dest / "early_stopping.txt", 'w') as f:
+                f.write(message)
+            wandb_run.summary["stopped_epoch"] = e
+            break
 
     wandb_run.finish()
 
@@ -302,8 +423,32 @@ def main():
     parser.add_argument('--epochs', default=20, type=int)
     parser.add_argument('--dataset', default='TOY2', choices=datasets_params.keys())
     parser.add_argument('--mode', default='full', choices=['partial', 'full'])
-    parser.add_argument('--loss', default='ce', choices=list(LOSSES.keys()),
+    parser.add_argument('--loss', default='ce_dice', choices=list(LOSSES.keys()),
                         help="Loss function to use for training.")
+    parser.add_argument('--seed', default=0, type=int,
+                        help="Random seed for weight initialization, data shuffling and dropout.")
+    parser.add_argument('--lr', default=0.0005, type=float, help="Initial learning rate (Adam).")
+    parser.add_argument('--lr-scheduler', default='none', choices=['none', 'plateau'],
+                        help="'plateau': multiply the learning rate by --lr-factor when the validation 3D dice "
+                             "has not improved for more than --lr-patience epochs.")
+    parser.add_argument('--lr-patience', default=4, type=int,
+                        help="Plateau scheduler: epochs without improvement before lowering the learning rate. "
+                             "Keep it below --patience, so the rate is lowered before training stops.")
+    parser.add_argument('--lr-factor', default=0.5, type=float, help="Plateau scheduler: reduction factor.")
+    parser.add_argument('--min-lr', default=1e-6, type=float, help="Lower bound for the learning rate.")
+    parser.add_argument('--patience', default=0, type=int,
+                        help="Early stopping: stop after this many epochs without improvement of the "
+                             "validation patient-level 3D dice (0 = disabled).")
+    parser.add_argument('--data-dir', type=Path, default=None,
+                        help="Folder with the train/ and val/ splits, e.g. one cross-validation fold. "
+                             "Defaults to data/<dataset>.")
+    parser.add_argument('--context', default=0, type=int,
+                        help="2.5D input: number of neighbouring slices on each side of the current one "
+                             "stacked as input channels (0 = plain 2D, 1 = 3 slices, ...). Uses ENet_25D.")
+    parser.add_argument('--class-weights', default='none',
+                        help="Class weights for the cross-entropy (also the CE part of ce_dice): "
+                             "'none', 'inv' or 'sqrt_inv' (inverse / sqrt inverse pixel frequency on "
+                             "the training set), or K comma-separated values, e.g. '0.5,1,1,1,2'.")
     parser.add_argument('--dest', type=Path, required=True,
                         help="Destination directory to save the results (predictions and weights).")
 

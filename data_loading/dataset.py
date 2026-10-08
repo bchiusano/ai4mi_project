@@ -22,12 +22,39 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+import json
+import re
 from pathlib import Path
 from typing import Callable, Union
 
+import torch
 from torch import Tensor
 from PIL import Image
 from torch.utils.data import Dataset
+
+from utils import patient_id_from_stem
+
+
+PATIENT_PATTERN = re.compile(r"^(Patient_\d+)_\d+$")
+
+
+def patient_from_slice(path: Path) -> str:
+    match = PATIENT_PATTERN.fullmatch(path.stem)
+    if match is None:
+        raise ValueError(f"Unexpected SegTHOR slice filename: {path.name}")
+    return match.group(1)
+
+
+def patient_ids_for_subset(root: Path, subset: str) -> set[str] | None:
+    """Return IDs from a pooled split manifest, or ``None`` for legacy folders."""
+
+    split_path = root / "split.json"
+    pooled_images = root / "img"
+    if not split_path.is_file() or not pooled_images.is_dir():
+        return None
+
+    split = json.loads(split_path.read_text(encoding="utf-8"))
+    return set(split[subset])
 
 
 def make_dataset(root, subset) -> list[tuple[Path, Path | None]]:
@@ -36,33 +63,65 @@ def make_dataset(root, subset) -> list[tuple[Path, Path | None]]:
     root = Path(root)
     print(f"> {root=}")
 
-    img_path = root / subset / 'img'
-    full_path = root / subset / 'gt'
+    selected_patients = patient_ids_for_subset(root, subset)
+    if selected_patients is None:
+        img_path = root / subset / 'img'
+        full_path = root / subset / 'gt'
+    else:
+        img_path = root / 'img'
+        full_path = root / 'gt'
 
     images: list[Path] = sorted(img_path.glob("*.png"))
-    full_labels: list[Path | None]
-    if subset != 'test':
-        full_labels = sorted(full_path.glob("*.png"))
+    if selected_patients is not None:
+        images = [path for path in images if patient_from_slice(path) in selected_patients]
+
+    labels_by_name = {path.name: path for path in full_path.glob("*.png")}
+    if labels_by_name:
+        missing = [path.name for path in images if path.name not in labels_by_name]
+        if missing:
+            raise RuntimeError(f"Missing labels for {len(missing)} images; first: {missing[0]}")
+        full_labels: list[Path | None] = [labels_by_name[path.name] for path in images]
     else:
         full_labels = [None] * len(images)
+
+    if not images:
+        raise RuntimeError(f"No images found for subset={subset!r}, root={root}")
 
     return list(zip(images, full_labels))
 
 
+def neighbour_indices(paths: list[Path], context: int) -> list[list[int]]:
+    """For each slice, the indices of the 2 * context + 1 slices centered on it.
+
+    Expects the paths sorted by patient, then slice number (as make_dataset does).
+    Neighbours never cross a patient boundary: at the first and last slices of a
+    volume, the edge slice is repeated.
+    """
+    patients: list[str] = [patient_id_from_stem(p.stem) for p in paths]
+
+    # First and last index of each patient's slices
+    first: dict[str, int] = {}
+    last: dict[str, int] = {}
+    for i, patient in enumerate(patients):
+        first.setdefault(patient, i)
+        last[patient] = i
+
+    return [[min(max(i + d, first[patient]), last[patient]) for d in range(-context, context + 1)]
+            for i, patient in enumerate(patients)]
+
+
 class SliceDataset(Dataset):
     def __init__(self, subset, root_dir, img_transform=None,
-                 gt_transform=None, augment=False, equalize=False, debug=False):
+                 gt_transform=None, debug=False, context: int = 0):
         self.root_dir: str = root_dir
         self.img_transform: Callable = img_transform
         self.gt_transform: Callable = gt_transform
-        self.augmentation: bool = augment
-        self.equalize: bool = equalize
-
-        self.test_mode: bool = subset == 'test'
-
+        self.context: int = context  # Number of neighbouring slices on each side (2.5D input)
         self.files = make_dataset(root_dir, subset)
         if debug:
             self.files = self.files[:10]
+        self.has_labels = all(gt_path is not None for _, gt_path in self.files)
+        self.neighbours = neighbour_indices([img for img, _ in self.files], context)
 
         print(f">> Created {subset} dataset with {len(self)} images...")
 
@@ -72,12 +131,17 @@ class SliceDataset(Dataset):
     def __getitem__(self, index) -> dict[str, Union[Tensor, int, str]]:
         img_path, gt_path = self.files[index]
 
-        img: Tensor = self.img_transform(Image.open(img_path))
+        img: Tensor
+        if self.context == 0:
+            img = self.img_transform(Image.open(img_path))
+        else:
+            # Stack the neighbouring slices as channels, the current one in the middle
+            img = torch.cat([self.img_transform(Image.open(self.files[j][0]))
+                             for j in self.neighbours[index]], dim=0)
 
-        data_dict = {"images": img,
-                     "stems": img_path.stem}
+        data_dict = {"stems": img_path.stem}
 
-        if not self.test_mode:
+        if self.has_labels:
             gt: Tensor = self.gt_transform(Image.open(gt_path))
 
             _, W, H = img.shape
@@ -85,5 +149,7 @@ class SliceDataset(Dataset):
             assert gt.shape == (K, W, H)
 
             data_dict["gts"] = gt
+
+        data_dict["images"] = img
 
         return data_dict

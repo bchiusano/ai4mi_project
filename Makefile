@@ -24,11 +24,30 @@ data/segthor_part1: data/segthor_part1.zip
 	unzip -q $<
 	rm -f $@/.DS_STORE
 
+data/segthor_train_full: data/segthor_train_full.zip
+	$(info $(yellow)unzip $<$(reset))
+	sha256sum -c data/segthor_train_full.sha256
+	rm -rf $@_tmp
+	mkdir -p $@_tmp
+	unzip -q $< -d $@_tmp
+	mv $@_tmp $@
+
 data/SEGTHOR:
 	$(info $(green)python $(CFLAGS) -m preprocessing.slice_segthor$(reset))
 	rm -rf $@_tmp $@
-	python $(CFLAGS) -m preprocessing.slice_segthor --source_dir data/segthor --dest_dir $@_tmp \
-		--shape 256 256 --retain 5
+	python $(CFLAGS) -m preprocessing.slice_segthor --source_dir data/segthor_part1 --dest_dir $@_tmp \
+		--shape 384 384 --target-spacing 1.0 1.0 --window -1000 1000 \
+		--validation-count 4 --test-count 4 --test-pool-start 1
+	mv $@_tmp $@
+
+## Full clean dataset: 28 train, 6 validation, and 6 held-out test patients
+data/SEGTHOR_FULL: data/segthor_train_full
+	$(info $(green)python $(CFLAGS) -m preprocessing.slice_segthor$(reset))
+	rm -rf $@_tmp $@
+	python $(CFLAGS) -m preprocessing.slice_segthor --source_dir data/segthor_train_full --dest_dir $@_tmp \
+		--shape 384 384 --target-spacing 1.0 1.0 --window -1000 1000 \
+		--validation-count 6 --test-count 6 --test-pool-start 21 --split-seed 0
+	python -m preprocessing.validate_processed_segthor $@_tmp
 	mv $@_tmp $@
 
 ## Corrected ground truth
@@ -37,5 +56,6 @@ data/SEGTHOR_CORRECTED:
 	find data/correct_data -name '.DS_Store' -delete
 	rm -rf $@_tmp $@
 	python $(CFLAGS) -m preprocessing.slice_segthor --source_dir data/correct_data --dest_dir $@_tmp \
-		--shape 256 256 --retain 5
+		--shape 384 384 --target-spacing 1.0 1.0 --window -1000 1000 \
+		--validation-count 4 --test-count 4 --test-pool-start 1
 	mv $@_tmp $@
