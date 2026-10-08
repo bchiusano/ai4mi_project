@@ -11,6 +11,10 @@ from PIL import Image
 from evaluation.evaluate_saved_epochs import discover_epochs
 from evaluation.evaluate_saved_predictions import evaluate_prediction_directory
 from losses import CrossEntropy, CrossEntropyDiceLoss, DiceLoss
+from postprocessing.connected_compontents import (
+    keep_largest_component,
+    select_improving_classes,
+)
 from utils import PatientVolumeDice, class2one_hot, dice_coef, patient_id_from_stem
 
 
@@ -153,6 +157,36 @@ class SavedPredictionEvaluationTests(unittest.TestCase):
             summary = (output_dir / "test_best_epoch_3d_dice.txt").read_text()
             self.assertIn("Best patient-level 3D-Dice epoch: 1", summary)
             self.assertIn("Mean foreground patient-level 3D Dice: 1.000000", summary)
+
+
+class ConnectedComponentsPostprocessingTests(unittest.TestCase):
+    def test_largest_component_is_kept_in_3d_per_class(self):
+        labels = np.zeros((2, 5, 5), dtype=np.uint8)
+        labels[:, 1:3, 1:3] = 1
+        labels[0, 4, 4] = 1
+        labels[0, 0, 4] = 2
+
+        cleaned = keep_largest_component(labels, 1)
+
+        self.assertEqual(np.count_nonzero(cleaned == 1), 8)
+        self.assertEqual(cleaned[0, 4, 4], 0)
+        self.assertEqual(cleaned[0, 0, 4], 2)
+
+    def test_validation_selects_only_classes_with_better_mean_dice(self):
+        prediction = np.zeros((1, 8, 8), dtype=np.uint8)
+        target = np.zeros_like(prediction)
+        prediction[0, 1:4, 1:4] = target[0, 1:4, 1:4] = 1
+        prediction[0, 7, 7] = 1
+        prediction[0, 1:3, 5:7] = target[0, 1:3, 5:7] = 2
+        prediction[0, 6:8, 5:7] = target[0, 6:8, 5:7] = 2
+
+        selected, metrics = select_improving_classes(
+            {"Patient_01": prediction}, {"Patient_01": target}, classes=3
+        )
+
+        self.assertEqual(selected, [1])
+        self.assertTrue(metrics["1"]["selected"])
+        self.assertFalse(metrics["2"]["selected"])
 
 
 if __name__ == "__main__":
