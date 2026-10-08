@@ -1,0 +1,253 @@
+# This config file implements the training workflow for UNETR on the 3D SegTHOR volumes, one cross-validation
+# fold per run. Use it on top of common.yaml, and add multi_gpu_train.yaml for DDP multi-GPU runs:
+#   --config_file "['configs/common.yaml','configs/train.yaml']" --fold 0
+
+both_keys: ['@image', '@label']
+
+# multi-gpu values, `rank` will be replaced in a separate script implementing multi-gpu changes
+rank: 0  # without multi-gpu support consider the process as rank 0 anyway
+is_not_rank0: '$@rank > 0'  # true if not main process, used to disable handlers for other ranks
+
+# hyperparameters for you to modify on the command line
+val_interval: 20  # how often (in epochs) to validate; full-volume sliding window inference is slow
+ckpt_interval: 50  # how often to save a checkpoint after an epoch
+early_stop_patience: 10  # validations without val_mean_dice improvement before stopping
+batch_size: 2  # number of volumes per batch
+num_samples: 4  # patches cropped per volume, so each step trains on batch_size * num_samples patches
+num_epochs: 1000  # 32 training volumes / batch_size 2 = 16 steps per epoch
+num_workers: 8  # number of workers to generate batches with
+learning_rate: 0.0001
+weight_decay: 0.00001
+amp: true  # mixed precision training and validation
+seed: 0
+
+# define various paths
+results_dir: '$os.path.join(@bundle_root, ''results'')'  # where results are being stored to
+# a new output directory is chosen using the fold and a timestamp for every invocation
+output_dir: '$os.path.join(@results_dir, ''fold'' + str(@fold) + datetime.datetime.now().strftime(''_%y%m%d_%H%M%S''))'
+
+# training and validation patients come from the cross-validation folds shared with the 2D models
+fold_split: '$json.load(open(@folds_file))[''folds''][@fold]'
+train_sub: '$[{@image: os.path.join(@data_root, p, p + ''.nii.gz''), @label: os.path.join(@data_root, p, ''GT.nii.gz'')} for p in @fold_split[''train'']]'
+val_sub: '$[{@image: os.path.join(@data_root, p, p + ''.nii.gz''), @label: os.path.join(@data_root, p, ''GT.nii.gz'')} for p in @fold_split[''val'']]'
+
+# these transforms are used for training and validation transform sequences
+base_transforms:
+- _target_: LoadImaged
+  keys: '@both_keys'
+  image_only: true
+- _target_: EnsureChannelFirstd
+  keys: '@both_keys'
+- _target_: Orientationd
+  keys: '@both_keys'
+  axcodes: RAS
+- _target_: Spacingd
+  keys: '@both_keys'
+  pixdim: '@pixdim'
+  mode: [bilinear, nearest]
+- _target_: ScaleIntensityRanged
+  keys: '@image'
+  a_min: '$@hu_window[0]'
+  a_max: '$@hu_window[1]'
+  b_min: 0.0
+  b_max: 1.0
+  clip: true
+- _target_: CropForegroundd  # crop away the air around the body
+  keys: '@both_keys'
+  source_key: '@image'
+
+# these are the random and regularising transforms used only for training
+train_transforms:
+- _target_: SpatialPadd
+  keys: '@both_keys'
+  spatial_size: '@roi_size'
+- _target_: RandCropByPosNegLabeld  # half the patches are centred on an organ, half anywhere
+  keys: '@both_keys'
+  label_key: '@label'
+  spatial_size: '@roi_size'
+  pos: 1
+  neg: 1
+  num_samples: '@num_samples'
+  image_key: '@image'
+  image_threshold: 0
+# no flips or 90 degree rotations: left/right position tells the organs apart (e.g. the aorta)
+- _target_: RandAffined
+  keys: '@both_keys'
+  prob: 0.3
+  rotate_range: [0.26, 0.26, 0.26]  # up to ~15 degrees
+  scale_range: [0.1, 0.1, 0.1]
+  mode: [bilinear, nearest]
+- _target_: RandScaleIntensityd
+  keys: '@image'
+  factors: 0.1
+  prob: 0.5
+- _target_: RandShiftIntensityd
+  keys: '@image'
+  offsets: 0.1
+  prob: 0.5
+
+# define the Compose objects for training and validation
+
+preprocessing:
+  _target_: Compose
+  transforms: $@base_transforms + @train_transforms
+
+val_preprocessing:
+  _target_: Compose
+  transforms: $@base_transforms
+
+# define the datasets for training and validation, the deterministic transforms are cached in memory
+
+train_dataset:
+  _target_: CacheDataset
+  data: '@train_sub'
+  transform: '@preprocessing'
+  cache_rate: 1.0
+  num_workers: '@num_workers'
+
+val_dataset:
+  _target_: CacheDataset
+  data: '@val_sub'
+  transform: '@val_preprocessing'
+  cache_rate: 1.0
+  num_workers: '@num_workers'
+
+# define the dataloaders for training and validation
+
+train_dataloader:
+  _target_: DataLoader
+  dataset: '@train_dataset'
+  batch_size: '@batch_size'
+  shuffle: true
+  num_workers: '@num_workers'
+
+val_dataloader:
+  _target_: DataLoader
+  dataset: '@val_dataset'
+  batch_size: 1  # validation volumes have different sizes
+  num_workers: '@num_workers'
+
+lossfn:
+  _target_: DiceCELoss
+  include_background: true
+  to_onehot_y: true  # convert ground truth to one-hot for training
+  softmax: true  # softmax applied to prediction
+
+optimizer:
+  _target_: torch.optim.AdamW
+  params: $@network.parameters()
+  lr: '@learning_rate'
+  weight_decay: '@weight_decay'
+
+# transform to apply to data from network to be suitable for validation
+postprocessing:
+  _target_: Compose
+  transforms:
+  - _target_: Activationsd
+    keys: '@pred'
+    softmax: true
+  - _target_: AsDiscreted
+    keys: ['@pred', '@label']
+    argmax: [true, false]
+    to_onehot: '@num_classes'
+
+# stops training when val_mean_dice stops improving, its trainer is set in `run` to avoid a circular reference
+early_stop:
+  _target_: EarlyStopHandler
+  patience: '@early_stop_patience'
+  score_function: '$lambda engine: engine.state.metrics[''val_mean_dice'']'
+  epoch_level: true
+
+# validation handlers to gather statistics, log these to a file, and save best checkpoint
+val_handlers:
+- _target_: StatsHandler
+  name: null  # use engine.logger as the Logger object to log to
+  output_transform: '$lambda x: None'
+- _target_: LogfileHandler  # log outputs from the validation engine
+  output_dir: '@output_dir'
+- _target_: CheckpointSaver
+  _disabled_: '@is_not_rank0'  # only need rank 0 to save
+  save_dir: '@output_dir'
+  save_dict:
+    model: '@network'
+  save_interval: 0  # don't save iterations, just when the metric improves
+  save_final: false
+  epoch_level: false
+  save_key_metric: true
+  key_metric_name: val_mean_dice  # save the checkpoint when this value improves
+  key_metric_filename: model.pt  # best model, the one to pass as ckpt_path to test.yaml / inference.yaml
+- '@early_stop'
+
+# engine for running validation, ties together objects defined above and has metric definitions
+evaluator:
+  _target_: SupervisedEvaluator
+  device: '@device'
+  val_data_loader: '@val_dataloader'
+  network: '@network'
+  inferer: '@sw_inferer'
+  postprocessing: '@postprocessing'
+  amp: '@amp'
+  key_val_metric:
+    val_mean_dice:
+      _target_: MeanDice
+      include_background: false
+      output_transform: $monai.handlers.from_engine([@pred, @label])
+  additional_metrics:
+    val_mean_iou:
+      _target_: MeanIoUHandler
+      include_background: false
+      output_transform: $monai.handlers.from_engine([@pred, @label])
+  val_handlers: '@val_handlers'
+
+# gathers the loss and validation values for each iteration, referred to by CheckpointSaver so defined separately
+metriclogger:
+  _target_: MetricLogger
+  evaluator: '@evaluator'
+
+handlers:
+- '@metriclogger'
+- _target_: CheckpointLoader  # resume or fine-tune from ckpt_path if it exists
+  _disabled_: $not os.path.exists(@ckpt_path)
+  load_path: '@ckpt_path'
+  load_dict:
+    model: '@network'
+- _target_: ValidationHandler  # run validation at the set interval, bridge between trainer and evaluator objects
+  validator: '@evaluator'
+  epoch_level: true
+  interval: '@val_interval'
+- _target_: CheckpointSaver
+  _disabled_: '@is_not_rank0'  # only need rank 0 to save
+  save_dir: '@output_dir'
+  save_dict:  # every epoch checkpoint saves the network and the metric logger in a dictionary
+    model: '@network'
+    logger: '@metriclogger'
+  save_interval: '@ckpt_interval'
+  save_final: true
+  epoch_level: true
+  n_saved: 1  # only keep the latest periodic checkpoint
+- _target_: StatsHandler
+  name: null  # use engine.logger as the Logger object to log to
+  tag_name: train_loss
+  output_transform: $monai.handlers.from_engine(['loss'], first=True)  # log loss value
+- _target_: LogfileHandler  # log outputs from the training engine
+  output_dir: '@output_dir'
+
+# engine for training, ties values defined above together into the main engine for the training process
+trainer:
+  _target_: SupervisedTrainer
+  max_epochs: '@num_epochs'
+  device: '@device'
+  train_data_loader: '@train_dataloader'
+  network: '@network'
+  inferer:  # trains on patches of exactly roi_size, so no sliding window needed
+    _target_: SimpleInferer
+  loss_function: '@lossfn'
+  optimizer: '@optimizer'
+  amp: '@amp'
+  key_train_metric: null
+  train_handlers: '@handlers'
+
+run:
+- $monai.utils.set_determinism(seed=@seed)
+- $@early_stop.set_trainer(@trainer)
+- $@trainer.run()
