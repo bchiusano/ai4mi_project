@@ -51,6 +51,7 @@ from data_loading.reproducibility import (
 from models.ShallowNet import shallowCNN
 from models.ENet import ENet
 from models.ENet_25D import ENet_25D
+from models.UNet import UNet
 from utils import (Dcm,
                    class2one_hot,
                    probs2one_hot,
@@ -137,11 +138,32 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
     factor: int = datasets_params[args.dataset]['factor'] if 'factor' in datasets_params[args.dataset] else 2
     in_dim: int = 2 * args.context + 1  # Current slice plus its neighbours on each side (2.5D)
     net_class = datasets_params[args.dataset]['net']
+    in_dim: int = 2 * args.context + 1
+
+    model_classes = {
+        "enet": ENet,
+        "unet": UNet,
+    }
+
+    net_class = (
+        datasets_params[args.dataset]["net"]
+        if args.model is None
+        else model_classes[args.model]
+    )
+
     if args.context > 0:
         if net_class is not ENet:
-            raise ValueError(f"--context > 0 (2.5D input) is only supported with ENet, not {net_class.__name__}")
+            raise ValueError(
+                "--context > 0 (2.5D input) is only supported with ENet"
+            )
         net_class = ENet_25D
-    net = net_class(in_dim, K, kernels=kernels, factor=factor)
+
+    net = net_class(
+        in_dim,
+        K,
+        kernels=kernels,
+        factor=factor,
+    )
     net.init_weights()
     net.to(device)
 
@@ -456,7 +478,14 @@ def main():
     parser.add_argument('--debug', action='store_true',
                         help="Keep only a fraction (10 samples) of the datasets, "
                              "to test the logics around epochs and logging easily.")
-
+    parser.add_argument("--model",
+        choices=["enet", "unet"],
+        default=None,
+        help=(
+            "Segmentation architecture. If omitted, the dataset's "
+            "default architecture is used."
+        ),
+    )
     args = parser.parse_args()
 
     pprint(args)
