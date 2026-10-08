@@ -24,7 +24,7 @@ RUN_TAG="${RUN_TAG:-cv}"
 EPOCHS="${EPOCHS:-50}"
 PATIENCE="${PATIENCE:-10}"  # Epochs without validation 3D dice improvement before stopping
 SEED="${SEED:-0}"  # Training seed (weight init, shuffling, dropout)
-LR_SCHEDULER="${LR_SCHEDULER:-none}"  # none or plateau (see main.py --lr-scheduler)
+LR_SCHEDULER="${LR_SCHEDULER:-plateau}"  # none or plateau (see main.py --lr-scheduler)
 LR_PATIENCE="${LR_PATIENCE:-4}"  # Plateau scheduler only; keep below PATIENCE
 
 case "$SETTING" in
