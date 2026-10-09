@@ -25,6 +25,7 @@
 import argparse
 import json
 import os
+import random
 import warnings
 from typing import Any
 from pathlib import Path
@@ -43,6 +44,7 @@ from torch.utils.data import DataLoader
 from functools import partial 
 
 from data_loading.dataset import SliceDataset
+from data_loading.augmentations import AUGMENTATION_MODES, build_augmentation
 from data_loading.reproducibility import (
     data_loader_generator,
     seed_data_loader_worker,
@@ -124,6 +126,21 @@ def compute_class_weights(spec: str, gt_paths: list[Path], K: int) -> list[float
         return weights.tolist()
 
 
+def save_checkpoint(path: Path, state: dict[str, Any]) -> None:
+        """Write to a temporary file first, so a job killed while saving keeps the previous checkpoint."""
+        tmp_path = path.with_suffix(".tmp")
+        torch.save(state, tmp_path)
+        os.replace(tmp_path, path)
+
+
+def extend_log(log: Tensor, epochs: int) -> Tensor:
+        """Pad a per-epoch log with NaN epochs, when a run is resumed with more --epochs than it started with."""
+        if len(log) >= epochs:
+                return log[:epochs]
+        padding = torch.full((epochs - len(log), *log.shape[1:]), float("nan"), dtype=log.dtype)
+        return torch.cat([log, padding])
+
+
 def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
     seed_everything(args.seed)
 
@@ -155,6 +172,7 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
                              root_dir,
                              img_transform=img_transform,
                              gt_transform= partial(gt_transform, K),
+                             joint_transform=build_augmentation(args.augmentation),  # Training set only
                              debug=args.debug,
                              context=args.context)
     train_generator = data_loader_generator(args.seed)
@@ -220,6 +238,19 @@ def runTraining(args):
         "test_patients": split_metadata.get("test") if split_metadata else None,
         "ce_class_weights": class_weights,
     }
+    checkpoint_path: Path = args.dest / "last.pt"
+    checkpoint: dict[str, Any] | None = None
+    if args.resume:
+        if not checkpoint_path.is_file():
+            raise FileNotFoundError(f"--resume needs a checkpoint from a previous run: {checkpoint_path}")
+        # Our own file, which also holds the Python and NumPy random states, so not weights_only
+        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+        if checkpoint["early_stopped"]:
+            raise RuntimeError(f"The run in {args.dest} stopped early at epoch {checkpoint['epoch']}; "
+                               "there is nothing to resume")
+        print(f">>> Resuming from {checkpoint_path}, after epoch {checkpoint['epoch']}")
+        run_metadata["resumed_after_epoch"] = checkpoint["epoch"]
+
     (args.dest / "run_config.json").write_text(
         json.dumps(run_metadata, indent=2), encoding="utf-8"
     )
@@ -231,6 +262,9 @@ def runTraining(args):
         group=os.environ.get("WANDB_RUN_GROUP"),
         mode=os.environ.get("WANDB_MODE", "online"),
         config=run_metadata | {"classes": K},
+        # Continue the same wandb run when resuming
+        id=checkpoint["wandb_id"] if checkpoint else None,
+        resume="allow" if checkpoint else None,
     )
 
     if args.mode == "full":
@@ -266,8 +300,32 @@ def runTraining(args):
 
     best_dice: float = float("-inf")
     epochs_without_improvement: int = 0
+    start_epoch: int = 0
 
-    for e in range(args.epochs):
+    if checkpoint:
+        net.load_state_dict(checkpoint["net"])
+        optimizer.load_state_dict(checkpoint["optimizer"])
+        if scheduler is not None:
+            scheduler.load_state_dict(checkpoint["scheduler"])
+        best_dice = checkpoint["best_dice"]
+        epochs_without_improvement = checkpoint["epochs_without_improvement"]
+        start_epoch = checkpoint["epoch"] + 1
+        logs = checkpoint["logs"]
+        log_loss_tra, log_dice_tra, log_loss_val, log_dice_val, log_dice3d_val, log_lr = (
+            extend_log(logs[name], args.epochs)
+            for name in ["loss_tra", "dice_tra", "loss_val", "dice_val", "dice3d_val", "lr"])
+        # Same random state as at the end of the saved epoch: same data order, dropout and augmentation
+        random.setstate(checkpoint["rng"]["python"])
+        np.random.set_state(checkpoint["rng"]["numpy"])
+        torch.set_rng_state(checkpoint["rng"]["torch"])
+        if torch.cuda.is_available() and checkpoint["rng"]["cuda"] is not None:
+            torch.cuda.set_rng_state_all(checkpoint["rng"]["cuda"])
+        train_loader.generator.set_state(checkpoint["rng"]["train_loader"])
+        val_loader.generator.set_state(checkpoint["rng"]["val_loader"])
+        if start_epoch >= args.epochs:
+            print(f">>> Already trained {start_epoch} epochs; increase --epochs to train longer")
+
+    for e in range(start_epoch, args.epochs):
         patient_dice = PatientVolumeDice(K)
         for m in ['train', 'val']:
             match m:
@@ -405,7 +463,29 @@ def runTraining(args):
             if optimizer.param_groups[0]['lr'] < previous_lr:
                 print(f">>> Lowered learning rate at epoch {e}: {previous_lr:.2e}->{optimizer.param_groups[0]['lr']:.2e}")
 
-        if args.patience and epochs_without_improvement >= args.patience:
+        early_stopped: bool = bool(args.patience and epochs_without_improvement >= args.patience)
+
+        # Everything needed to continue after this epoch with --resume
+        save_checkpoint(checkpoint_path, {
+            "epoch": e,
+            "net": net.state_dict(),
+            "optimizer": optimizer.state_dict(),
+            "scheduler": scheduler.state_dict() if scheduler is not None else None,
+            "best_dice": best_dice,
+            "epochs_without_improvement": epochs_without_improvement,
+            "early_stopped": early_stopped,
+            "logs": {"loss_tra": log_loss_tra, "dice_tra": log_dice_tra, "loss_val": log_loss_val,
+                     "dice_val": log_dice_val, "dice3d_val": log_dice3d_val, "lr": log_lr},
+            "rng": {"python": random.getstate(),
+                    "numpy": np.random.get_state(),
+                    "torch": torch.get_rng_state(),
+                    "cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+                    "train_loader": train_loader.generator.get_state(),
+                    "val_loader": val_loader.generator.get_state()},
+            "wandb_id": wandb_run.id,
+        })
+
+        if early_stopped:
             message = (f">>> Early stopping at epoch {e}: no improvement of the patient-level 3D dice "
                        f"for {args.patience} epochs (best {best_dice:05.3f})")
             print(message)
@@ -425,8 +505,12 @@ def main():
     parser.add_argument('--mode', default='full', choices=['partial', 'full'])
     parser.add_argument('--loss', default='ce_dice', choices=list(LOSSES.keys()),
                         help="Loss function to use for training.")
+    parser.add_argument('--augmentation', default='none', choices=AUGMENTATION_MODES,
+                        help="Online augmentation of the training slices (data_loading/augmentations.py): "
+                             "'geometric' (rotation, translation, scaling), 'intensity' (brightness, contrast, "
+                             "gamma, noise) or 'combined'. Validation is never augmented.")
     parser.add_argument('--seed', default=0, type=int,
-                        help="Random seed for weight initialization, data shuffling and dropout.")
+                        help="Random seed for weight initialization, data shuffling, dropout and augmentation.")
     parser.add_argument('--lr', default=0.0005, type=float, help="Initial learning rate (Adam).")
     parser.add_argument('--lr-scheduler', default='none', choices=['none', 'plateau'],
                         help="'plateau': multiply the learning rate by --lr-factor when the validation 3D dice "
@@ -451,6 +535,10 @@ def main():
                              "the training set), or K comma-separated values, e.g. '0.5,1,1,1,2'.")
     parser.add_argument('--dest', type=Path, required=True,
                         help="Destination directory to save the results (predictions and weights).")
+
+    parser.add_argument('--resume', action='store_true',
+                        help="Continue the run in --dest from its last.pt checkpoint (saved after every epoch). "
+                             "--epochs can be raised to train an earlier run for longer.")
 
     parser.add_argument('--gpu', action='store_true')
     parser.add_argument('--debug', action='store_true',

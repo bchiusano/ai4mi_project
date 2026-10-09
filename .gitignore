@@ -10,3 +10,5 @@ logs/
 wandb/
 
 projects
+# pretrained / trained MONAI bundle weights
+models/segmentation_template_monai/models/

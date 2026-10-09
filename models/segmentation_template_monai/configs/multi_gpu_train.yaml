@@ -33,6 +33,7 @@ run:
 - $dist.init_process_group(backend='nccl')
 - $torch.cuda.set_device(@device)
 - $monai.utils.set_determinism(seed=@seed)
+- $@load_pretrained
 - $@early_stop.set_trainer(@trainer)
 - $@trainer.run()
 - $dist.destroy_process_group()
