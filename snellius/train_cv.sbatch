@@ -57,7 +57,9 @@ PROJECT="$HOME/ai4mi_project"
 SCRATCH_PROJECT="/scratch-shared/$USER/ai4mi_project"
 if [[ -z "${DATA_DIR:-}" ]]; then
     : "${FOLD:?Submit with FOLD=<fold index>, or with DATA_DIR=<dataset folder>}"
-    DATA_DIR="$SCRATCH_PROJECT/data/SEGTHOR_FULL_CV/fold_$FOLD"
+    DEFAULT_CV_ROOT="/scratch-shared/${USER}/ai4mi_project/data/SEGTHOR_FULL_CV_32"
+    CV_ROOT="${CV_ROOT:-$DEFAULT_CV_ROOT}"
+    DATA_DIR="${CV_ROOT}/fold_${FOLD}"
     RESULTS_NAME=segthor_full_cv
     RUN_SUBDIR="fold_$FOLD"
 else
