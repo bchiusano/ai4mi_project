@@ -26,6 +26,15 @@ PATIENCE="${PATIENCE:-10}"  # Epochs without validation 3D dice improvement befo
 SEED="${SEED:-0}"  # Training seed (weight init, shuffling, dropout)
 LR_SCHEDULER="${LR_SCHEDULER:-plateau}"  # none or plateau (see main.py --lr-scheduler)
 LR_PATIENCE="${LR_PATIENCE:-4}"  # Plateau scheduler only; keep below PATIENCE
+MODEL="${MODEL:-enet}"
+
+case "$MODEL" in
+    enet|unet) ;;
+    *)
+        echo "Unsupported MODEL=$MODEL; expected enet or unet" >&2
+        exit 2
+        ;;
+esac
 
 AUGMENTATION=none  # Online augmentation of the training slices (see main.py --augmentation)
 case "$SETTING" in
@@ -40,6 +49,11 @@ case "$SETTING" in
         exit 2
         ;;
 esac
+
+if [[ "$MODEL" == "unet" && "$CONTEXT" -ne 0 ]]; then
+    echo "U-Net currently supports only 2D input (CONTEXT=0)" >&2
+    exit 2
+fi
 
 PROJECT="$HOME/ai4mi_project"
 SCRATCH_PROJECT="/scratch-shared/$USER/ai4mi_project"
@@ -71,6 +85,7 @@ export OMP_NUM_THREADS="$SLURM_CPUS_PER_TASK"
 echo "Started: $(date)"
 echo "Host: $(hostname)"
 echo "Setting: $SETTING (loss=$LOSS, class weights=$CLASS_WEIGHTS, context=$CONTEXT, augmentation=$AUGMENTATION)"
+echo "Model: $MODEL"
 echo "Data: $DATA_DIR"
 echo "Seed: $SEED"
 echo "Epochs: $EPOCHS, early stopping patience: $PATIENCE, lr scheduler: $LR_SCHEDULER (lr patience $LR_PATIENCE)"
@@ -81,7 +96,8 @@ python --version
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 python -c 'import torch; assert torch.cuda.is_available(), "CUDA is unavailable"; print("PyTorch CUDA:", torch.cuda.get_device_name(0))'
 python -m py_compile main.py utils.py losses.py \
-    data_loading/dataset.py data_loading/augmentations.py models/ENet.py models/ENet_25D.py models/ShallowNet.py \
+    data_loading/dataset.py data_loading/augmentations.py \
+    models/ENet.py models/ENet_25D.py models/UNet.py models/ShallowNet.py \
     plotting/plot.py evaluation/summarize_segthor_run.py \
     evaluation/evaluate_saved_predictions.py inference/predict_segthor_from_weights.py
 python -m unittest discover -s tests -v
@@ -124,6 +140,7 @@ python -u main.py \
     --lr-scheduler "$LR_SCHEDULER" \
     --lr-patience "$LR_PATIENCE" \
     --dataset SEGTHOR_FULL \
+    --model "$MODEL" \
     --data-dir "$DATA_DIR" \
     --mode full \
     --loss "$LOSS" \
@@ -150,6 +167,7 @@ python -m evaluation.evaluate_saved_predictions \
 # Held-out test set: predict once with the best (validation-selected) weights
 if [[ -d "$DATA_DIR/test/img" ]]; then
     python -m inference.predict_segthor_from_weights \
+        --model "$MODEL" \
         --weights "$RUN_DIR/bestweights.pt" \
         --image-dir "$DATA_DIR/test/img" \
         --output-dir "$RUN_DIR/best_epoch/test" \
