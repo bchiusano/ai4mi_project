@@ -19,7 +19,7 @@
 
 set -euo pipefail
 
-: "${SETTING:?Submit with SETTING=ce_2d, ce_25d, ce_dice_2d, ce_dice_25d or weighted_ce_25d}"
+: "${SETTING:?Submit with SETTING=ce_2d, ce_25d, ce_dice_2d, ce_dice_25d, ce_dice_25d_aug or weighted_ce_25d}"
 RUN_TAG="${RUN_TAG:-cv}"
 EPOCHS="${EPOCHS:-50}"
 PATIENCE="${PATIENCE:-10}"  # Epochs without validation 3D dice improvement before stopping
@@ -36,11 +36,13 @@ case "$MODEL" in
         ;;
 esac
 
+AUGMENTATION=none  # Online augmentation of the training slices (see main.py --augmentation)
 case "$SETTING" in
     ce_2d)           LOSS=ce;      CONTEXT=0; CLASS_WEIGHTS=none ;;
     ce_25d)          LOSS=ce;      CONTEXT=1; CLASS_WEIGHTS=none ;;
     ce_dice_2d)      LOSS=ce_dice; CONTEXT=0; CLASS_WEIGHTS=none ;;
     ce_dice_25d)     LOSS=ce_dice; CONTEXT=1; CLASS_WEIGHTS=none ;;
+    ce_dice_25d_aug) LOSS=ce_dice; CONTEXT=1; CLASS_WEIGHTS=none; AUGMENTATION=combined ;;
     weighted_ce_25d) LOSS=ce;      CONTEXT=1; CLASS_WEIGHTS="${CLASS_WEIGHTS:-sqrt_inv}" ;;
     *)
         echo "Unsupported SETTING=$SETTING" >&2
@@ -82,7 +84,7 @@ export OMP_NUM_THREADS="$SLURM_CPUS_PER_TASK"
 
 echo "Started: $(date)"
 echo "Host: $(hostname)"
-echo "Setting: $SETTING (loss=$LOSS, class weights=$CLASS_WEIGHTS, context=$CONTEXT)"
+echo "Setting: $SETTING (loss=$LOSS, class weights=$CLASS_WEIGHTS, context=$CONTEXT, augmentation=$AUGMENTATION)"
 echo "Model: $MODEL"
 echo "Data: $DATA_DIR"
 echo "Seed: $SEED"
@@ -94,7 +96,8 @@ python --version
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 python -c 'import torch; assert torch.cuda.is_available(), "CUDA is unavailable"; print("PyTorch CUDA:", torch.cuda.get_device_name(0))'
 python -m py_compile main.py utils.py losses.py \
-    data_loading/dataset.py models/ENet.py models/ENet_25D.py models/UNet.py models/ShallowNet.py \
+    data_loading/dataset.py data_loading/augmentations.py \
+    models/ENet.py models/ENet_25D.py models/UNet.py models/ShallowNet.py \
     plotting/plot.py evaluation/summarize_segthor_run.py \
     evaluation/evaluate_saved_predictions.py inference/predict_segthor_from_weights.py
 python -m unittest discover -s tests -v
@@ -143,6 +146,7 @@ python -u main.py \
     --loss "$LOSS" \
     --class-weights "$CLASS_WEIGHTS" \
     --context "$CONTEXT" \
+    --augmentation "$AUGMENTATION" \
     --dest "$RUN_DIR" \
     --gpu
 

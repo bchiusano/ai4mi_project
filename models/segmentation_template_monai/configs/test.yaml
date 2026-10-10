@@ -3,8 +3,6 @@
 # computed against the unmodified GT.nii.gz. Use it on top of common.yaml:
 #   --config_file "['configs/common.yaml','configs/test.yaml']" --fold 0 --ckpt_path <run dir>/model.pt
 
-gt: gt  # key for the ground truth in its original space
-
 # hyperparameters for you to modify on the command line
 num_workers: 4  # number of workers to generate batches with
 save_pred: false  # whether to save prediction images or just run metric tests
@@ -15,15 +13,16 @@ output_dir: '$os.path.join(@bundle_root, ''eval'', ''fold'' + str(@fold))'  # wh
 
 # patients to evaluate, override on the command line to evaluate others, e.g. --patients "['Patient_01']"
 patients: '$json.load(open(@folds_file))[''folds''][@fold][''val'']'
-data_dicts: '$[{@image: os.path.join(@data_root, p, p + ''.nii.gz''), @gt: os.path.join(@data_root, p, ''GT.nii.gz'')} for p in @patients]'
+data_dicts: '$[{@image: os.path.join(@data_root, p, p + ''.nii.gz''), @label: os.path.join(@data_root, p, ''GT.nii.gz'')} for p in @patients]'
 
-# same as validation preprocessing in train.yaml, only the image is resampled, the GT is kept as is
+# same as validation preprocessing in train.yaml, but only the image is resampled: the label stays in its original
+# space to compare against the inverted predictions
 transforms:
 - _target_: LoadImaged
-  keys: ['@image', '@gt']
+  keys: ['@image', '@label']
   image_only: true
 - _target_: EnsureChannelFirstd
-  keys: ['@image', '@gt']
+  keys: ['@image', '@label']
 - _target_: Orientationd
   keys: '@image'
   axcodes: RAS
@@ -82,7 +81,7 @@ postprocessing:
     resample: false
     separate_folder: false
   - _target_: AsDiscreted
-    keys: ['@pred', '@gt']
+    keys: ['@pred', '@label']
     to_onehot: '@num_classes'
 
 # inference handlers to load checkpoint, gather statistics
@@ -114,7 +113,7 @@ evaluator:
     val_mean_dice:
       _target_: MeanDice
       include_background: false
-      output_transform: $monai.handlers.from_engine([@pred, @gt])
+      output_transform: $monai.handlers.from_engine([@pred, @label])
   val_handlers: '@handlers'
 
 run:

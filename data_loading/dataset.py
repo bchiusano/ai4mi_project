@@ -112,10 +112,12 @@ def neighbour_indices(paths: list[Path], context: int) -> list[list[int]]:
 
 class SliceDataset(Dataset):
     def __init__(self, subset, root_dir, img_transform=None,
-                 gt_transform=None, debug=False, context: int = 0):
+                 gt_transform=None, joint_transform=None, debug=False, context: int = 0):
         self.root_dir: str = root_dir
         self.img_transform: Callable = img_transform
         self.gt_transform: Callable = gt_transform
+        # Online augmentation of (image, one-hot gt) pairs; only pass one for the training set
+        self.joint_transform: Callable | None = joint_transform
         self.context: int = context  # Number of neighbouring slices on each side (2.5D input)
         self.files = make_dataset(root_dir, subset)
         if debug:
@@ -143,6 +145,9 @@ class SliceDataset(Dataset):
 
         if self.has_labels:
             gt: Tensor = self.gt_transform(Image.open(gt_path))
+
+            if self.joint_transform is not None:
+                img, gt = self.joint_transform(img, gt)
 
             _, W, H = img.shape
             K, _, _ = gt.shape
