@@ -16,34 +16,33 @@ pred: $monai.utils.CommonKeys.PRED
 
 # SegTHOR labels: 0 background, 1 esophagus, 2 heart, 3 trachea, 4 aorta
 num_classes: 5
-pixdim: [1.5, 1.5, 2.5]  # target voxel spacing in mm; SegTHOR is ~0.98 x 0.98 x 2.5 natively
-roi_size: [96, 96, 96]  # UNETR patch size; also the sliding window size at inference
-hu_window: [-1000, 1000]  # CT intensity window mapped to [0, 1], same as the 2D preprocessing
+# spacing and intensity window match the pretrained BTCV model, so the pretrained features see familiar inputs
+pixdim: [1.5, 1.5, 2.0]  # target voxel spacing in mm; SegTHOR is ~0.98 x 0.98 x 2.5 natively
+roi_size: [96, 96, 96]  # training patch size; also the sliding window size at inference
+hu_window: [-175, 250]  # CT intensity window mapped to [0, 1] (soft tissue; air, incl. the trachea, maps to 0)
 device: $torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 # define various paths
-bundle_root: .  # root directory of the bundle (models/segmentation_template)
+bundle_root: .  # root directory of the bundle (models/segmentation_template_monai)
 project_root: '$os.path.abspath(os.path.join(@bundle_root, ''..'', ''..''))'
 # folder with one Patient_XX/ per patient holding Patient_XX.nii.gz and GT.nii.gz
 # (unzip data/segthor_train_full.zip into data/segthor_train_full)
 data_root: '$os.path.join(@project_root, ''data'', ''segthor_train_full'', ''train'')'
-folds_file: '$os.path.join(@project_root, ''preprocessing'', ''segthor_full_cv_folds.json'')'
+# same 5-fold train/val split of 32 patients as the 2D runs; only the patient lists are used, the volumes are
+# loaded from data_root
+folds_file: '$os.path.join(@project_root, ''data'', ''SEGTHOR_FULL_PREPROCESSED_split_cv'', ''folds.json'')'
 fold: 0  # cross-validation fold of folds_file to train on / evaluate
-ckpt_path: '$os.path.join(@bundle_root, ''models'', ''model.pt'')'  # checkpoint to load
+ckpt_path: '$os.path.join(@bundle_root, ''models'', ''model.pt'')'  # trained SegTHOR checkpoint to load
+# MONAI BTCV SwinUNETR weights (see large_files.yml), the starting point for fine-tuning
+pretrained_path: '$os.path.join(@bundle_root, ''models'', ''btcv_swin_unetr.pt'')'
 
-network_def:
-  _target_: UNETR
+network_def:  # same architecture as the pretrained BTCV bundle, except for the number of output classes
+  _target_: SwinUNETR
+  spatial_dims: 3
   in_channels: 1
   out_channels: '@num_classes'
-  img_size: '@roi_size'
-  feature_size: 16
-  hidden_size: 768
-  mlp_dim: 3072
-  num_heads: 12
-  proj_type: conv
-  norm_name: instance
-  res_block: true
-  dropout_rate: 0.0
+  feature_size: 48
+  use_checkpoint: true  # gradient checkpointing: less GPU memory for some extra compute
 network: $@network_def.to(@device)
 
 # whole volumes are larger than the patch size the network was built for, so they are

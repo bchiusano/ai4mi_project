@@ -1,5 +1,5 @@
 large_files:
-  - path: "models/model.pt"
-    url: "https://github.com/KCL-BMEIS/bundle-data/raw/main/segmentation_template/model.pt"
-    hash_val: "b11405475d2d3da1f8a2aec9286f0548"
+  - path: "models/btcv_swin_unetr.pt"
+    url: "https://huggingface.co/MONAI/swin_unetr_btcv_segmentation/resolve/main/models/model.pt"
+    hash_val: "50dd67a01b28a1d5487fd9ac27e682fb"
     hash_type: "md5"

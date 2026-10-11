@@ -8,3 +8,4 @@ scikit-image
 scipy
 matplotlib
 wandb
+monai[nibabel,ignite,fire,pyyaml,einops]>=1.4

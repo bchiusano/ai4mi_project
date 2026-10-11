@@ -1,75 +1,47 @@
 
-# Template Segmentation Bundle
+# SegTHOR SwinUNETR Bundle
 
-This bundle is meant to be an example of segmentation in 3D which you can copy and modify to create your own bundle.
-It is only roughly trained for the synthetic data you can generate with [this notebook](./generate_data.ipynb)
-so doesn't do anything useful on its own. The purpose is to demonstrate the base line for segmentation network
-bundles compatible with MONAILabel amongst other things.
+3D segmentation of the SegTHOR organs at risk (esophagus, heart, trachea, aorta) with a SwinUNETR fine-tuned from the
+[MONAI BTCV bundle](https://huggingface.co/MONAI/swin_unetr_btcv_segmentation). Adapted from the MONAI model zoo
+segmentation template.
 
-To use this bundle, copy the contents of the whole directory and change the definitions for network, data, transforms,
-or whatever else you want for your own new segmentation bundle. Some of the names are critical for MONAILable but
-otherwise you're free to change just about whatever else is defined here to suit your network.
+## Setup
 
-This bundle should also demonstrate good practice and design, however there is one caveat about definitions being
-copied between config files. Ideally there should be a `common.yaml` file for all the definitions used by every other
-config file which is then included with that file. MONAILabel doesn't support this yet so this bundle will be updated
-once it does to exemplify this better practice.
-
-## Generating Demo Data
-
-Run all the cells of [this notebook](./generate_data.ipynb) to generate training and test data. These will be 3D
-nifti files containing volumes with randomly generated spheres of varying intensities and some noise for fun. The
-segmentation task is very easy so your network will train in minutes with the default configuration of values. A test
-data directory will separately be created since the test and inference configs are configured to apply the network to
-every nifti file in a given directory with a certain pattern.
-
-## Training
-
-To train a new network the `train.yaml` script can be used alone with no other arguments (assume `BUNDLE` is the root
-directory of the bundle):
+The pretrained BTCV weights (`models/btcv_swin_unetr.pt`, not in git) are listed in `large_files.yml`:
 
 ```sh
-python -m monai.bundle run \
-    --meta_file "$BUNDLE/configs/metadata.json" \
-    --config_file "$BUNDLE/configs/train.yaml" \
-    --bundle_root "$BUNDLE"
+python -m monai.bundle download_large_files --bundle_path models/segmentation_template_monai
 ```
 
-A `train.sh` script is also provided in `docs` which implements this invocation with some helper commands. It
-relies on a Conda environment called `monai` so comment or modify those lines if you're not using such an environment.
-See MONAI installation information about what environment to create for the features you want.
+The 3D volumes come from `data/segthor_train_full.zip`, unzipped so that `data_root` holds one `Patient_XX/` folder
+per patient with `Patient_XX.nii.gz` and `GT.nii.gz` (`data/segthor_train_full/train` by default).
 
-The training config includes a number of hyperparameters like `learning_rate` and `num_workers`. These control aspects
-of how training operates in terms of how many processes to use, when to perform validation, when to save checkpoints,
-and other things. Other aspects of the script can be modified on the command line so these aren't exhaustive but are a
-guide to the kind of parameterisation that make sense for a bundle.
+## Configs
 
-## Testing and Inference
+All configs are used on top of `configs/common.yaml`, which defines the network, classes, spacing, intensity window
+and sliding window inferer:
 
-Two configs are provided (`test.yaml` and `inference.yaml`) for doing post-training inference with the model. The first
-requires image and segmentation pairs which are used with network outputs to assess performance using metrics. This is
-very similar to training validation but is done on separate images. This config can be set to save predicted segmentations
-by setting `save_pred` to true but by default it will just run metrics and print their results.
+- `train.yaml`: trains on the train patients of one fold of `data/SEGTHOR_FULL_PREPROCESSED_split_cv/folds.json`
+  (the same split as the 2D runs) and validates on its val patients. Saves the best model by validation Dice as
+  `model.pt` in `output_dir`. The pretrained weights are loaded by `scripts/pretrained.py`, which also initialises
+  the esophagus and aorta outputs from the matching BTCV classes; `--pretrained_path None` trains from scratch.
+- `test.yaml`: evaluates a checkpoint on the val patients of a fold. Predictions are mapped back to the original CT
+  space before computing Dice against the unmodified GT; per-patient, per-organ Dice goes to
+  `val_mean_dice_raw.csv`.
+- `inference.yaml`: segments every `Patient_*.nii*` under `dataset_dir` and saves `Patient_XX_seg.nii.gz` files in
+  the original CT space.
+- `multi_gpu_train.yaml`: mixin for DDP training with `torchrun`, see `train_multigpu.sh`.
 
-The inference config is for generating new segmentations from images which don't have ground truths, so this is used for
-actually applying the network in practice. This will apply the network to every image in an input directory matching a
-pattern and save the predicted segmentations to an output directory.
+Any config value can be overridden on the command line, e.g. `--fold 2` or `--hu_window "[-1000, 1000]"`.
 
-Using inference on the command line is demonstrated in [this notebook](./visualise_inference.ipynb) with visualisation.
-Some explanation of some command line choices are given in the notebook as well, similar command line invocations can
-also be done with the included `inference.sh` script file.
+## Running
 
-## Other Considerations
+On Snellius, use the job files: `snellius/train_swin_unetr.sbatch` trains and evaluates one fold,
+`snellius/submit_swin_unetr_cv.sh` submits all five. Locally, the scripts in `docs/` run each config with the project
+venv:
 
-There is no `scripts` directory containing a valid Python module to be imported in your configs. This wasn't necessary
-for this bundle but if you want to include custom code in a bundle please follow the bundle tutorials on how to do this.
-
-The `multi_gpu_train.yaml` config is defined as a "mixin" to implement DDP based multi-gpu training. The script
-`train_multigpu.sh` illustrates an example of how to invoke these configs together with `torchrun`.
-
-The `inference.yaml` config is compatible with MONAILabel such that you can load one of the synthetic images and perform
-inference through a label server. This doesn't permit active learning however, that is a later enhancement for this
-bundle. If you're changing definitions in the `inference.yaml` config file be careful about changing names and consult
-the MONAILabel documentation about required definition names. An example script to start a server is given in
-`run_monailabel.sh` which will download the bundle application and "install" this bundle using a symlink then start
-the server. Future updates to MONAILabel will improve this process.
+```sh
+models/segmentation_template_monai/docs/train.sh --fold 0
+models/segmentation_template_monai/docs/test.sh --fold 0 --ckpt_path <run dir>/model.pt
+models/segmentation_template_monai/docs/inference.sh --ckpt_path <run dir>/model.pt --dataset_dir <dir>
+```

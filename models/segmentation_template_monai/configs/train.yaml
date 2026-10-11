@@ -1,5 +1,5 @@
-# This config file implements the training workflow for UNETR on the 3D SegTHOR volumes, one cross-validation
-# fold per run. Use it on top of common.yaml, and add multi_gpu_train.yaml for DDP multi-GPU runs:
+# This config file implements fine-tuning the pretrained MONAI BTCV SwinUNETR on the 3D SegTHOR volumes, one
+# cross-validation fold per run. Set --pretrained_path None to train from scratch instead. Use it on top of common.yaml, and add multi_gpu_train.yaml for DDP multi-GPU runs:
 #   --config_file "['configs/common.yaml','configs/train.yaml']" --fold 0
 
 both_keys: ['@image', '@label']
@@ -9,14 +9,14 @@ rank: 0  # without multi-gpu support consider the process as rank 0 anyway
 is_not_rank0: '$@rank > 0'  # true if not main process, used to disable handlers for other ranks
 
 # hyperparameters for you to modify on the command line
-val_interval: 20  # how often (in epochs) to validate; full-volume sliding window inference is slow
+val_interval: 10  # how often (in epochs) to validate; full-volume sliding window inference is slow
 ckpt_interval: 50  # how often to save a checkpoint after an epoch
 early_stop_patience: 10  # validations without val_mean_dice improvement before stopping
 batch_size: 2  # number of volumes per batch
-num_samples: 4  # patches cropped per volume, so each step trains on batch_size * num_samples patches
-num_epochs: 1000  # 32 training volumes / batch_size 2 = 16 steps per epoch
+num_samples: 2  # patches cropped per volume, so each step trains on batch_size * num_samples patches
+num_epochs: 500  # 25-26 training volumes / batch_size 2 = 13 steps per epoch
 num_workers: 8  # number of workers to generate batches with
-learning_rate: 0.0001
+learning_rate: 0.0001  # half the rate the BTCV model was trained with from scratch
 weight_decay: 0.00001
 amp: true  # mixed precision training and validation
 seed: 0
@@ -26,7 +26,8 @@ results_dir: '$os.path.join(@bundle_root, ''results'')'  # where results are bei
 # a new output directory is chosen using the fold and a timestamp for every invocation
 output_dir: '$os.path.join(@results_dir, ''fold'' + str(@fold) + datetime.datetime.now().strftime(''_%y%m%d_%H%M%S''))'
 
-# training and validation patients come from the cross-validation folds shared with the 2D models
+# training and validation patients come from the cross-validation folds shared with the 2D models: training
+# only sees the fold's train volumes, validation (and best checkpoint selection) only its val volumes
 fold_split: '$json.load(open(@folds_file))[''folds''][@fold]'
 train_sub: '$[{@image: os.path.join(@data_root, p, p + ''.nii.gz''), @label: os.path.join(@data_root, p, ''GT.nii.gz'')} for p in @fold_split[''train'']]'
 val_sub: '$[{@image: os.path.join(@data_root, p, p + ''.nii.gz''), @label: os.path.join(@data_root, p, ''GT.nii.gz'')} for p in @fold_split[''val'']]'
@@ -127,11 +128,13 @@ val_dataloader:
   batch_size: 1  # validation volumes have different sizes
   num_workers: '@num_workers'
 
-lossfn:
+lossfn:  # as used for the pretrained BTCV model
   _target_: DiceCELoss
   include_background: true
   to_onehot_y: true  # convert ground truth to one-hot for training
   softmax: true  # softmax applied to prediction
+  squared_pred: true
+  batch: true  # Dice over the whole batch, more stable for small organs missing from some patches
 
 optimizer:
   _target_: torch.optim.AdamW
@@ -206,7 +209,7 @@ metriclogger:
 
 handlers:
 - '@metriclogger'
-- _target_: CheckpointLoader  # resume or fine-tune from ckpt_path if it exists
+- _target_: CheckpointLoader  # resume from a trained SegTHOR ckpt_path if it exists, replacing the pretrained weights
   _disabled_: $not os.path.exists(@ckpt_path)
   load_path: '@ckpt_path'
   load_dict:
@@ -232,6 +235,14 @@ handlers:
 - _target_: LogfileHandler  # log outputs from the training engine
   output_dir: '@output_dir'
 
+# initialises the network from the pretrained BTCV weights when referenced in `run` (scripts/pretrained.py, needs the
+# bundle root on PYTHONPATH); disabled with --pretrained_path None
+load_pretrained:
+  _target_: scripts.pretrained.load_btcv_weights
+  _disabled_: '$not @pretrained_path'
+  network: '@network'
+  path: '@pretrained_path'
+
 # engine for training, ties values defined above together into the main engine for the training process
 trainer:
   _target_: SupervisedTrainer
@@ -249,5 +260,6 @@ trainer:
 
 run:
 - $monai.utils.set_determinism(seed=@seed)
+- $@load_pretrained
 - $@early_stop.set_trainer(@trainer)
 - $@trainer.run()

@@ -10,6 +10,7 @@ import torch
 from data_loading.dataset import make_dataset, neighbour_indices
 from models.ENet import ENet
 from models.ENet_25D import ENet_25D
+from models.UNet import UNet
 
 
 def main() -> None:
@@ -24,6 +25,7 @@ def main() -> None:
     parser.add_argument("--gpu", action="store_true")
     parser.add_argument("--context", type=int, default=0,
                         help="Neighbouring slices on each side used at training time (2.5D, ENet_25D)")
+    parser.add_argument("--model",choices=["enet", "unet"],default="enet",)
     args = parser.parse_args()
 
     if args.data_dir is not None:
@@ -39,7 +41,11 @@ def main() -> None:
         )
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    if args.context > 0:
+    if args.model == "unet":
+        if args.context != 0:
+            raise ValueError("U-Net currently supports only 2D input (--context 0)")
+        model = UNet(1, 5, kernels=8, factor=2)
+    elif args.context > 0:
         model = ENet_25D(2 * args.context + 1, 5, kernels=8, factor=2)
     else:
         model = ENet(1, 5, kernels=8, factor=2)

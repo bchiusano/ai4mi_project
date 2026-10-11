@@ -1,19 +1,21 @@
 {
     "schema": "https://github.com/Project-MONAI/MONAI-extra-test-data/releases/download/0.8.1/meta_schema_20220324.json",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "changelog": {
+        "0.2.0": "fine-tune the pretrained MONAI BTCV SwinUNETR (swin_unetr_btcv_segmentation 0.5.8) instead of training UNETR from scratch",
         "0.1.0": "UNETR for SegTHOR thoracic organs at risk, adapted from the MONAI segmentation template 0.0.4"
     },
-    "monai_version": "1.4.0",
-    "pytorch_version": "2.4.0",
-    "numpy_version": "1.24.4",
+    "monai_version": "1.6.1",
+    "pytorch_version": "2.14.0",
+    "numpy_version": "2.5.3",
     "optional_packages_version": {
-        "nibabel": "5.2.1",
-        "pytorch-ignite": "0.4.11"
+        "nibabel": "5.4.2",
+        "pytorch-ignite": "0.5.5",
+        "einops": "0.8.2"
     },
-    "name": "SegTHOR UNETR Segmentation",
+    "name": "SegTHOR SwinUNETR Segmentation",
     "task": "3D segmentation of thoracic organs at risk in CT",
-    "description": "UNETR trained on 96x96x96 patches of SegTHOR CT volumes resampled to 1.5x1.5x2.5 mm and windowed to [-1000, 1000] HU. Segments the esophagus, heart, trachea and aorta; whole volumes are segmented with sliding window inference and mapped back to the original CT space.",
+    "description": "SwinUNETR initialised from the MONAI BTCV abdominal multi-organ bundle (huggingface.co/MONAI/swin_unetr_btcv_segmentation) and fine-tuned on 96x96x96 patches of SegTHOR CT volumes resampled to 1.5x1.5x2.0 mm and windowed to [-175, 250] HU, as for the pretrained model. Segments the esophagus, heart, trachea and aorta; the esophagus and aorta outputs start from the corresponding BTCV classes. Whole volumes are segmented with sliding window inference and mapped back to the original CT space.",
     "authors": "AI4MI project group",
     "copyright": "Copyright (c) 2023 MONAI Consortium",
     "network_data_format": {
@@ -64,5 +66,9 @@
                 }
             }
         }
-    }
+    },
+    "references": [
+        "Hatamizadeh et al., Swin UNETR: Swin Transformers for Semantic Segmentation of Brain Tumors in MRI Images, 2022",
+        "Tang et al., Self-Supervised Pre-Training of Swin Transformers for 3D Medical Image Analysis, CVPR 2022"
+    ]
 }
