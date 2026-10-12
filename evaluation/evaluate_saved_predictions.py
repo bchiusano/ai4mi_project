@@ -11,7 +11,7 @@ from typing import Mapping, Sequence
 import numpy as np
 from PIL import Image
 
-from utils import patient_id_from_stem, surface_hd95, surface_assd, surface_nsd
+from utils import patient_id_from_stem, surface_metrics
 
 
 ORGAN_NAMES = ("background", "esophagus", "heart", "trachea", "aorta")
@@ -163,18 +163,20 @@ def evaluate_hd95_directory(
             axis=2,
         )
         for class_index in range(classes):
-            # Background HD95 is not an organ-boundary metric and adds a large
-            # unnecessary distance transform, so keep it undefined.
-            value = (
-                float("nan")
+            # Background surface metrics are not organ-boundary metrics and add a
+            # large unnecessary distance transform, so keep them undefined.
+            # HD95, ASSD and NSD (2 mm tolerance) share one distance computation.
+            metrics = (
+                {"hd95": float("nan"), "assd": float("nan"), "nsd": float("nan")}
                 if class_index == 0
-                else surface_hd95(
+                else surface_metrics(
                     pred_volume == class_index,
                     target_volume == class_index,
                     spacing,
+                    tau=2.0,
                 )
             )
-            hd95[patient_index, class_index] = value
+            hd95[patient_index, class_index] = metrics["hd95"]
             organ = (
                 ORGAN_NAMES[class_index]
                 if class_index < len(ORGAN_NAMES)
@@ -184,35 +186,10 @@ def evaluate_hd95_directory(
                 "patient": patient,
                 "class": class_index,
                 "organ": organ,
-                "hd95_mm": value,
+                "hd95_mm": metrics["hd95"],
+                "assd_mm": metrics["assd"],
+                "nsd": metrics["nsd"],
             })
-    for class_index in range(classes):
-        if class_index == 0:
-            val_hd95 = float("nan")
-            val_assd = float("nan")
-            val_nsd = float("nan")
-        else:
-            pred_c = pred_volume == class_index
-            target_c = target_volume == class_index
-            
-            val_hd95 = surface_hd95(pred_c, target_c, spacing)
-            val_assd = surface_assd(pred_c, target_c, spacing)
-            val_nsd = surface_nsd(pred_c, target_c, spacing, tau=2.0)
-
-        organ = (
-            ORGAN_NAMES[class_index]
-            if class_index < len(ORGAN_NAMES)
-            else f"class_{class_index}"
-        )
-        rows.append({
-            "patient": patient,
-            "class": class_index,
-            "organ": organ,
-            "hd95_mm": val_hd95,
-            "assd_mm": val_assd,
-            "nsd": val_nsd,
-        })
-
 
     return patient_ids, hd95, rows
 
