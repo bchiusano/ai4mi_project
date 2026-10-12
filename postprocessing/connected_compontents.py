@@ -6,7 +6,7 @@ from typing import Any
 
 import numpy as np
 from PIL import Image
-from scipy.ndimage import label
+from scipy.ndimage import generate_binary_structure, label
 
 from utils import patient_id_from_stem
 
@@ -28,7 +28,7 @@ def load_volumes(folder: Path, classes: int, label_step: float) -> tuple[
 	for path in sorted(folder.glob("*.png")):
 		patient = patient_id_from_stem(path.stem)
 		patient_part, separator, slice_part = path.stem.rpartition("_")
-		if not separator or not slice_part.isdigit():
+		if not patient_part or not separator or not slice_part.isdigit():
 			raise ValueError(f"Cannot read slice index from filename: {path.name}")
 		if int(slice_part) in slices[patient]:
 			raise ValueError(f"Duplicate slice {slice_part} for {patient}")
@@ -56,15 +56,35 @@ def load_volumes(folder: Path, classes: int, label_step: float) -> tuple[
 	return volumes, paths_by_patient
 
 
-def keep_largest_component(labels: np.ndarray, class_index: int) -> np.ndarray:
-	"""Keep the largest 6-connected 3D component of one class; send others to background."""
-	components, component_count = label(labels == class_index)
+def keep_largest_component(
+	labels: np.ndarray, class_index: int, connectivity: int = 6
+) -> np.ndarray:
+	"""Keep the largest 3D component of one class; send others to background."""
+	connectivity_ranks = {6: 1, 18: 2, 26: 3}
+	if connectivity not in connectivity_ranks:
+		raise ValueError(f"Connectivity must be 6, 18, or 26; got {connectivity}")
+	structure = generate_binary_structure(
+		rank=3, connectivity=connectivity_ranks[connectivity]
+	)
+	components, component_count = label(labels == class_index, structure=structure)
 	if component_count <= 1:
 		return labels.copy()
 	component_sizes = np.bincount(components.ravel())[1:]
 	largest_component = int(np.argmax(component_sizes)) + 1
 	result = labels.copy()
 	result[(labels == class_index) & (components != largest_component)] = 0
+	return result
+
+
+def keep_largest_components(
+	labels: np.ndarray, classes: int, connectivity: int = 6
+) -> np.ndarray:
+	"""Keep the largest 3D component of every foreground class."""
+	if classes < 2:
+		raise ValueError(f"Classes must include background and at least one foreground class; got {classes}")
+	result = labels.copy()
+	for class_index in range(1, classes):
+		result = keep_largest_component(result, class_index, connectivity)
 	return result
 
 

@@ -1,3 +1,4 @@
+import csv
 import unittest
 import subprocess
 import sys
@@ -6,6 +7,7 @@ from tempfile import TemporaryDirectory
 
 import numpy as np
 import torch
+import nibabel as nib
 from PIL import Image
 
 from evaluation.evaluate_saved_epochs import discover_epochs
@@ -227,6 +229,17 @@ class ConnectedComponentsPostprocessingTests(unittest.TestCase):
         self.assertEqual(cleaned[0, 4, 4], 0)
         self.assertEqual(cleaned[0, 0, 4], 2)
 
+    def test_largest_component_respects_connectivity(self):
+        labels = np.zeros((2, 2, 2), dtype=np.uint8)
+        labels[0, 0, 0] = 1
+        labels[1, 1, 0] = 1
+
+        cleaned_6 = keep_largest_component(labels, 1, connectivity=6)
+        cleaned_18 = keep_largest_component(labels, 1, connectivity=18)
+
+        self.assertEqual(np.count_nonzero(cleaned_6 == 1), 1)
+        self.assertEqual(np.count_nonzero(cleaned_18 == 1), 2)
+
     def test_validation_selects_only_classes_with_better_mean_dice(self):
         prediction = np.zeros((1, 8, 8), dtype=np.uint8)
         target = np.zeros_like(prediction)
@@ -242,6 +255,187 @@ class ConnectedComponentsPostprocessingTests(unittest.TestCase):
         self.assertEqual(selected, [1])
         self.assertTrue(metrics["1"]["selected"])
         self.assertFalse(metrics["2"]["selected"])
+
+
+class ComparisonPostprocessingTests(unittest.TestCase):
+    def test_comparison_groups_png_slices_per_model_and_matches_patient_gt(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_dir = root / "heldout_predictions"
+            prediction_a_dir = input_dir / "model_a"
+            prediction_b_dir = input_dir / "model_b"
+            prediction_c_dir = input_dir / "model_c"
+            gt_dir = root / "heldout_ground_truth" / "Patient_01"
+            prediction_a_dir.mkdir(parents=True)
+            prediction_b_dir.mkdir(parents=True)
+            prediction_c_dir.mkdir(parents=True)
+            gt_dir.mkdir(parents=True)
+
+            target = np.zeros((6, 6, 3), dtype=np.uint8)
+            target[1:3, 1:3, 0:2] = 1
+            prediction_xyz = target.copy()
+            prediction_xyz[4:6, 4:6, 2] = 1
+            prediction_slices = np.transpose(prediction_xyz, (2, 0, 1))
+            affine = np.diag([1.0, 1.5, 2.0, 1.0])
+            nib.save(nib.Nifti1Image(target, affine), str(gt_dir / "GT.nii.gz"))
+            # The adjacent source CT must not be selected as the label volume.
+            nib.save(
+                nib.Nifti1Image(np.zeros_like(target), affine),
+                str(gt_dir / "Patient_01.nii.gz"),
+            )
+            nib.save(
+                nib.Nifti1Image(prediction_xyz, affine),
+                str(prediction_c_dir / "Patient_01.nii.gz"),
+            )
+            for index, prediction_slice in enumerate(prediction_slices):
+                Image.fromarray(prediction_slice * 63).save(
+                    prediction_a_dir / f"Patient_01_{index:04d}.png"
+                )
+                Image.fromarray(target[:, :, index] * 63).save(
+                    prediction_b_dir / f"Patient_01_{index:04d}.png"
+                )
+            output_dir = root / "comparison"
+            script = Path(__file__).resolve().parents[1] / "postprocessing" / "comparison.py"
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--input-dir",
+                    str(input_dir),
+                    "--gt-dir",
+                    str(root / "heldout_ground_truth"),
+                    "--output-dir",
+                    str(output_dir),
+                    "--classes",
+                    "2",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertIn(
+                f"Matching model_a/Patient_01 -> {gt_dir / 'GT.nii.gz'}",
+                completed.stdout,
+            )
+
+            with (output_dir / "per_patient_per_class.csv").open(
+                newline="", encoding="utf-8"
+            ) as csv_file:
+                rows = list(csv.DictReader(csv_file))
+            by_model = {row["model"]: row for row in rows}
+            self.assertLess(float(by_model["model_a"]["dice_before"]), 1.0)
+            self.assertEqual(float(by_model["model_a"]["dice_after"]), 1.0)
+            self.assertEqual(float(by_model["model_b"]["dice_before"]), 1.0)
+            self.assertEqual(float(by_model["model_b"]["dice_after"]), 1.0)
+            self.assertLess(float(by_model["model_c"]["dice_before"]), 1.0)
+            self.assertEqual(float(by_model["model_c"]["dice_after"]), 1.0)
+
+            with (output_dir / "per_patient_summary.csv").open(
+                newline="", encoding="utf-8"
+            ) as csv_file:
+                summary_rows = list(csv.DictReader(csv_file))
+            self.assertEqual(
+                {row["ground_truth"] for row in summary_rows},
+                {str(gt_dir / "GT.nii.gz")},
+            )
+            processed_path = (
+                output_dir / "processed_predictions" / "model_a" / "Patient_01.nii.gz"
+            )
+            processed = nib.load(str(processed_path))
+            np.testing.assert_array_equal(np.asanyarray(processed.dataobj), target)
+            np.testing.assert_allclose(processed.affine, affine)
+            self.assertTrue(
+                (
+                    output_dir
+                    / "processed_predictions"
+                    / "model_b"
+                    / "Patient_01.nii.gz"
+                ).is_file()
+            )
+            processed_nifti = nib.load(
+                str(
+                    output_dir
+                    / "processed_predictions"
+                    / "model_c"
+                    / "Patient_01.nii.gz"
+                )
+            )
+            np.testing.assert_array_equal(
+                np.asanyarray(processed_nifti.dataobj), target
+            )
+
+    def test_test_postprocessing_exports_all_model_slices_without_metrics(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_dir = root / "heldout_predictions"
+            model_a = input_dir / "model_a"
+            model_b = input_dir / "model_b"
+            model_c = input_dir / "model_c"
+            source_dir = root / "source"
+            patient_dir = source_dir / "Patient_02"
+            model_a.mkdir(parents=True)
+            model_b.mkdir(parents=True)
+            model_c.mkdir(parents=True)
+            patient_dir.mkdir(parents=True)
+
+            source = np.zeros((4, 4, 2), dtype=np.int16)
+            affine = np.diag([1.0, 2.0, 3.0, 1.0])
+            nifti_prediction = np.zeros_like(source, dtype=np.uint8)
+            nifti_prediction[1:3, 1:3, :] = 1
+            nifti_prediction[3, 3, 1] = 1
+            nib.save(
+                nib.Nifti1Image(nifti_prediction, affine),
+                str(model_c / "Patient_02.nii.gz"),
+            )
+            nib.save(
+                nib.Nifti1Image(source, affine),
+                str(patient_dir / "Patient_02.nii.gz"),
+            )
+            for model_dir in (model_a, model_b):
+                for index in range(2):
+                    mask = np.zeros((4, 4), dtype=np.uint8)
+                    mask[1:3, 1:3] = 1
+                    Image.fromarray(mask * 63).save(
+                        model_dir / f"Patient_02_{index:04d}.png"
+                    )
+
+            output_dir = root / "processed"
+            script = (
+                Path(__file__).resolve().parents[1]
+                / "postprocessing"
+                / "postprocess_test.py"
+            )
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--input-dir",
+                    str(input_dir),
+                    "--reference-dir",
+                    str(source_dir),
+                    "--output-dir",
+                    str(output_dir),
+                    "--classes",
+                    "2",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            for model_name in ("model_a", "model_b", "model_c"):
+                output_path = output_dir / model_name / "Patient_02.nii.gz"
+                self.assertTrue(output_path.is_file())
+                result = nib.load(str(output_path))
+                self.assertEqual(result.shape, source.shape)
+                np.testing.assert_allclose(result.affine, affine)
+                if model_name == "model_c":
+                    expected = np.zeros_like(nifti_prediction)
+                    expected[1:3, 1:3, :] = 1
+                    np.testing.assert_array_equal(
+                        np.asanyarray(result.dataobj), expected
+                    )
+            self.assertFalse(any(output_dir.glob("*.csv")))
 
 
 if __name__ == "__main__":
