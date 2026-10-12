@@ -1,0 +1,20 @@
+# Add-on to train.yaml: choose training patch centres per class instead of uniformly over the foreground.
+# With RandCropByPosNegLabeld, positive centres follow the voxel counts, so only ~2% of all patches are centred on
+# the esophagus (4% of the foreground voxels) against ~37% on the heart. Use after train.yaml:
+#   --config_file "['configs/common.yaml','configs/train.yaml','configs/esophagus_sampling.yaml']"
+
+# patch-centre ratios in label order: 0 background, 1 esophagus, 2 heart, 3 trachea, 4 aorta.
+# 3/8 background (as random patches keep the false positives in check), 2/8 esophagus (~2% before),
+# 1/8 each for the other organs. Measured on Patient_02: 33% / 29% / 14% / 10% / 14%.
+crop_class_ratios: [3, 2, 1, 1, 1]
+
+train_transforms#1:  # replaces RandCropByPosNegLabeld, the second training transform
+  _target_: RandCropByLabelClassesd
+  keys: '@both_keys'
+  label_key: '@label'
+  spatial_size: '@roi_size'
+  ratios: '@crop_class_ratios'
+  num_classes: '@num_classes'
+  num_samples: '@num_samples'
+  image_key: '@image'
+  image_threshold: 0
