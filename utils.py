@@ -306,6 +306,29 @@ def surface_nsd(
 
     return float(np.count_nonzero(distances <= tau) / distances.size)
 
+
+def surface_metrics(
+    pred: np.ndarray,
+    target: np.ndarray,
+    spacing: Iterable[float] | None = None,
+    tau: float = 2.0,
+) -> dict[str, float]:
+    """HD95, ASSD and NSD from a single surface distance computation.
+
+    Same values and empty-mask conventions as surface_hd95, surface_assd and
+    surface_nsd, which each recompute the distance transforms.
+    """
+    if tau < 0 or not np.isfinite(tau):
+        raise ValueError(f"Tolerance tau must be non-negative and finite, got {tau}")
+    distances, pred_has_fg, target_has_fg = _compute_surface_distances(pred, target, spacing)
+    if distances is None:
+        if not pred_has_fg and not target_has_fg:
+            return {"hd95": float("nan"), "assd": float("nan"), "nsd": float("nan")}
+        return {"hd95": float("inf"), "assd": float("inf"), "nsd": 0.0}
+    return {"hd95": float(np.percentile(distances, 95)),
+            "assd": float(np.mean(distances)),
+            "nsd": float(np.count_nonzero(distances <= tau) / distances.size)}
+
 class PatientVolumeDice:
     """Accumulate exact per-patient 3D Dice statistics from 2D batches.
 
