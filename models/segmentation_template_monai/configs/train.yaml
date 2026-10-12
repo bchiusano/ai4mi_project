@@ -136,6 +136,16 @@ lossfn:  # as used for the pretrained BTCV model
   squared_pred: true
   batch: true  # Dice over the whole batch, more stable for small organs missing from some patches
 
+# the same loss for validation, where the label is already one-hot (see postprocessing)
+val_logits: pred_logits
+val_lossfn:
+  _target_: DiceCELoss
+  include_background: true
+  to_onehot_y: false
+  softmax: true
+  squared_pred: true
+  batch: true
+
 optimizer:
   _target_: torch.optim.AdamW
   params: $@network.parameters()
@@ -146,6 +156,12 @@ optimizer:
 postprocessing:
   _target_: Compose
   transforms:
+  - _target_: CopyItemsd  # keep the raw network output for the validation loss, `pred` becomes a label map below
+    keys: '@pred'
+    names: '@val_logits'
+  - _target_: CastToTyped  # logits may be float16 under amp
+    keys: '@val_logits'
+    dtype: $torch.float32
   - _target_: Activationsd
     keys: '@pred'
     softmax: true
@@ -200,6 +216,10 @@ evaluator:
       _target_: MeanIoUHandler
       include_background: false
       output_transform: $monai.handlers.from_engine([@pred, @label])
+    val_loss:  # training loss on each whole validation volume (sliding window), averaged over the volumes
+      _target_: IgniteMetricHandler
+      loss_fn: '@val_lossfn'
+      output_transform: $monai.handlers.from_engine([@val_logits, @label])
   val_handlers: '@val_handlers'
 
 # gathers the loss and validation values for each iteration, referred to by CheckpointSaver so defined separately
