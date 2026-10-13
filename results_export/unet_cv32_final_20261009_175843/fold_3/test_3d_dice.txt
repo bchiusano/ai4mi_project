@@ -1,0 +1,8 @@
+Prediction directory: /scratch-shared/scur0152/ai4mi_project/results/segthor_full_cv/unet_cv32_final_20261009_175843/ce_dice_2d/fold_3/best_epoch/test
+Patients: Patient_03, Patient_17, Patient_20, Patient_25, Patient_26, Patient_27, Patient_32, Patient_33
+Mean foreground patient-level 3D Dice: 0.824239
+Esophagus 3D Dice: 0.688057
+Heart 3D Dice: 0.912834
+Trachea 3D Dice: 0.825559
+Aorta 3D Dice: 0.870504
+Saved per-patient results to: /scratch-shared/scur0152/ai4mi_project/results/segthor_full_cv/unet_cv32_final_20261009_175843/ce_dice_2d/fold_3/test_3d_dice.csv
