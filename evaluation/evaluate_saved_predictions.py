@@ -11,7 +11,7 @@ from typing import Mapping, Sequence
 import numpy as np
 from PIL import Image
 
-from utils import patient_id_from_stem, surface_hd95
+from utils import patient_id_from_stem, surface_metrics
 
 
 ORGAN_NAMES = ("background", "esophagus", "heart", "trachea", "aorta")
@@ -163,18 +163,20 @@ def evaluate_hd95_directory(
             axis=2,
         )
         for class_index in range(classes):
-            # Background HD95 is not an organ-boundary metric and adds a large
-            # unnecessary distance transform, so keep it undefined.
-            value = (
-                float("nan")
+            # Background surface metrics are not organ-boundary metrics and add a
+            # large unnecessary distance transform, so keep them undefined.
+            # HD95, ASSD and NSD (2 mm tolerance) share one distance computation.
+            metrics = (
+                {"hd95": float("nan"), "assd": float("nan"), "nsd": float("nan")}
                 if class_index == 0
-                else surface_hd95(
+                else surface_metrics(
                     pred_volume == class_index,
                     target_volume == class_index,
                     spacing,
+                    tau=2.0,
                 )
             )
-            hd95[patient_index, class_index] = value
+            hd95[patient_index, class_index] = metrics["hd95"]
             organ = (
                 ORGAN_NAMES[class_index]
                 if class_index < len(ORGAN_NAMES)
@@ -184,7 +186,9 @@ def evaluate_hd95_directory(
                 "patient": patient,
                 "class": class_index,
                 "organ": organ,
-                "hd95_mm": value,
+                "hd95_mm": metrics["hd95"],
+                "assd_mm": metrics["assd"],
+                "nsd": metrics["nsd"],
             })
 
     return patient_ids, hd95, rows
@@ -192,15 +196,19 @@ def evaluate_hd95_directory(
 
 def merge_metric_rows(
     dice_rows: list[dict[str, object]],
-    hd95_rows: list[dict[str, object]],
+    surface_rows: list[dict[str, object]],
 ) -> list[dict[str, object]]:
-    hd95_lookup = {
-        (row["patient"], row["class"]): row["hd95_mm"] for row in hd95_rows
+    lookup = {
+        (row["patient"], row["class"]): row for row in surface_rows
     }
     merged: list[dict[str, object]] = []
     for row in dice_rows:
         combined = dict(row)
-        combined["hd95_mm"] = hd95_lookup[(row["patient"], row["class"])]
+        key = (row["patient"], row["class"])
+        if key in lookup:
+            combined["hd95_mm"] = lookup[key]["hd95_mm"]
+            combined["assd_mm"] = lookup[key]["assd_mm"]
+            combined["nsd"] = lookup[key]["nsd"]
         merged.append(combined)
     return merged
 
@@ -270,16 +278,33 @@ def main() -> None:
             expected_patient_ids,
         )
         if hd95_patients != patient_ids:
-            raise RuntimeError(f"HD95 patients differ: {hd95_patients} != {patient_ids}")
+            raise RuntimeError(f"Surface metric patients differ: {hd95_patients} != {patient_ids}")
         rows = merge_metric_rows(rows, hd95_rows)
+
+        # Reconstruct 2D (patients, classes) arrays from the surface metric rows
+        assd = np.full_like(hd95, np.nan)
+        nsd = np.full_like(hd95, np.nan)
+        for row in hd95_rows:
+            p_idx = hd95_patients.index(row["patient"])
+            c_idx = int(row["class"])
+            assd[p_idx, c_idx] = row.get("assd_mm", np.nan)
+            nsd[p_idx, c_idx] = row.get("nsd", np.nan)
+
         print(f"Mean foreground patient-level 3D HD95: {np.nanmean(hd95[:, 1:]):.6f} mm")
+        print(f"Mean foreground patient-level 3D ASSD: {np.nanmean(assd[:, 1:]):.6f} mm")
+        print(f"Mean foreground patient-level 3D NSD:  {np.nanmean(nsd[:, 1:]):.6f}")
+        print("-----")
+
         for class_index in range(1, args.classes):
             organ = (ORGAN_NAMES[class_index]
                      if class_index < len(ORGAN_NAMES)
                      else f"class_{class_index}")
+            organ_name = organ.capitalize()
             print(
-                f"{organ.capitalize()} 3D HD95: "
-                f"{np.nanmean(hd95[:, class_index]):.6f} mm"
+                f"{organ_name:<11} | "
+                f"HD95: {np.nanmean(hd95[:, class_index]):>9.4f} mm | "
+                f"ASSD: {np.nanmean(assd[:, class_index]):>9.4f} mm | "
+                f"NSD: {np.nanmean(nsd[:, class_index]):>7.4f}"
             )
 
     if args.csv:

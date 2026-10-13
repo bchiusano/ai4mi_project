@@ -15,6 +15,8 @@
 # patients in the original CT space.
 # Submit all folds with snellius/submit_swin_unetr_cv.sh. Quick end-to-end check of the pipeline:
 #   sbatch --time=00:30:00 --export=ALL,FOLD=0,RUN_TAG=smoke,EPOCHS=2,VAL_INTERVAL=1 snellius/train_swin_unetr.sbatch
+# Training variants: EXTRA_CONFIG names add-on configs in the bundle's configs/ applied after train.yaml, e.g.
+#   EXTRA_CONFIG=esophagus_sampling.yaml RUN_TAG=cv_esophagus_sampling (use a new RUN_TAG for every variant)
 
 set -euo pipefail
 
@@ -23,6 +25,7 @@ RUN_TAG="${RUN_TAG:-cv}"
 EPOCHS="${EPOCHS:-500}"
 VAL_INTERVAL="${VAL_INTERVAL:-10}"  # Epochs between validations
 PATIENCE="${PATIENCE:-10}"  # Validations without validation Dice improvement before stopping
+EXTRA_CONFIG="${EXTRA_CONFIG:-}"  # Space-separated add-on configs applied after train.yaml (training only)
 
 PROJECT="$HOME/ai4mi_project"
 BUNDLE="$PROJECT/models/segmentation_template_monai"
@@ -46,6 +49,7 @@ export PYTHONPATH="$BUNDLE"
 echo "Started: $(date)"
 echo "Host: $(hostname)"
 echo "Fold: $FOLD, epochs: $EPOCHS, validation every $VAL_INTERVAL epochs, early stopping patience: $PATIENCE"
+echo "Extra training configs: ${EXTRA_CONFIG:-none}"
 echo "Results directory: $RESULTS_DIR"
 echo "Git commit: $(git rev-parse HEAD)"
 python --version
@@ -79,8 +83,19 @@ bundle_args=(
     --fold "$FOLD"
 )
 
+train_configs="['$BUNDLE/configs/common.yaml','$BUNDLE/configs/train.yaml'"
+for extra in $EXTRA_CONFIG; do
+    if [[ ! -f "$BUNDLE/configs/$extra" ]]; then
+        echo "Extra config not found: $BUNDLE/configs/$extra" >&2
+        exit 1
+    fi
+    train_configs+=",'$BUNDLE/configs/$extra'"
+done
+train_configs+="]"
+echo "Training configs: $train_configs"
+
 python -u -m monai.bundle run \
-    --config_file "['$BUNDLE/configs/common.yaml','$BUNDLE/configs/train.yaml']" \
+    --config_file "$train_configs" \
     "${bundle_args[@]}" \
     --output_dir "$RESULTS_DIR" \
     --pretrained_path "$PRETRAINED" \

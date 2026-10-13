@@ -156,6 +156,56 @@ def meta_dice(sum_str: str, label: Tensor, pred: Tensor, smooth: float = 1e-8) -
 dice_coef = partial(meta_dice, "bk...->bk")
 dice_batch = partial(meta_dice, "bk...->k")  # used for 3d dice
 
+def _compute_surface_distances(
+    pred: np.ndarray,
+    target: np.ndarray,
+    spacing: Iterable[float] | None = None,
+) -> tuple[np.ndarray | None, bool, bool]:
+    pred_mask = np.asarray(pred, dtype=bool)
+    target_mask = np.asarray(target, dtype=bool)
+    if pred_mask.shape != target_mask.shape:
+        raise ValueError(
+            f"Prediction and target shapes differ: {pred_mask.shape} != {target_mask.shape}"
+        )
+    if pred_mask.ndim < 2:
+        raise ValueError("Surface metrics expect a 2D or 3D mask")
+
+    pred_has_fg = bool(pred_mask.any())
+    target_has_fg = bool(target_mask.any())
+
+    if not pred_has_fg or not target_has_fg:
+        return None, pred_has_fg, target_has_fg
+
+    if spacing is None:
+        voxel_spacing = np.ones(pred_mask.ndim, dtype=np.float64)
+    else:
+        voxel_spacing = np.asarray(tuple(spacing), dtype=np.float64)
+        if voxel_spacing.shape != (pred_mask.ndim,):
+            raise ValueError(
+                f"Expected {pred_mask.ndim} spacing values, got {voxel_spacing.size}"
+            )
+        if not np.all(np.isfinite(voxel_spacing)) or np.any(voxel_spacing <= 0):
+            raise ValueError(f"Spacing must contain positive finite values: {spacing}")
+
+    connectivity = ndimage.generate_binary_structure(pred_mask.ndim, 1)
+    pred_surface = pred_mask ^ ndimage.binary_erosion(
+        pred_mask, structure=connectivity, border_value=0
+    )
+    target_surface = target_mask ^ ndimage.binary_erosion(
+        target_mask, structure=connectivity, border_value=0
+    )
+
+    distance_to_target = ndimage.distance_transform_edt(
+        ~target_surface, sampling=voxel_spacing
+    )
+    distance_to_pred = ndimage.distance_transform_edt(
+        ~pred_surface, sampling=voxel_spacing
+    )
+
+    symmetric_surface_distances = np.concatenate(
+        (distance_to_target[pred_surface], distance_to_pred[target_surface])
+    )
+    return symmetric_surface_distances, pred_has_fg, target_has_fg
 
 def surface_hd95(
     pred: np.ndarray,
@@ -230,6 +280,54 @@ def patient_id_from_stem(stem: str) -> str:
         return patient_id
     return stem
 
+def surface_assd(
+    pred: np.ndarray,
+    target: np.ndarray,
+    spacing: Iterable[float] | None = None,
+) -> float:
+    distances, pred_has_fg, target_has_fg = _compute_surface_distances(pred, target, spacing)
+    if distances is None:
+        return float("nan") if (not pred_has_fg and not target_has_fg) else float("inf")
+    return float(np.mean(distances))
+
+
+def surface_nsd(
+    pred: np.ndarray,
+    target: np.ndarray,
+    spacing: Iterable[float] | None = None,
+    tau: float = 2.0,
+) -> float:
+    if tau < 0 or not np.isfinite(tau):
+        raise ValueError(f"Tolerance tau must be non-negative and finite, got {tau}")
+
+    distances, pred_has_fg, target_has_fg = _compute_surface_distances(pred, target, spacing)
+    if distances is None:
+        return float("nan") if (not pred_has_fg and not target_has_fg) else 0.0
+
+    return float(np.count_nonzero(distances <= tau) / distances.size)
+
+
+def surface_metrics(
+    pred: np.ndarray,
+    target: np.ndarray,
+    spacing: Iterable[float] | None = None,
+    tau: float = 2.0,
+) -> dict[str, float]:
+    """HD95, ASSD and NSD from a single surface distance computation.
+
+    Same values and empty-mask conventions as surface_hd95, surface_assd and
+    surface_nsd, which each recompute the distance transforms.
+    """
+    if tau < 0 or not np.isfinite(tau):
+        raise ValueError(f"Tolerance tau must be non-negative and finite, got {tau}")
+    distances, pred_has_fg, target_has_fg = _compute_surface_distances(pred, target, spacing)
+    if distances is None:
+        if not pred_has_fg and not target_has_fg:
+            return {"hd95": float("nan"), "assd": float("nan"), "nsd": float("nan")}
+        return {"hd95": float("inf"), "assd": float("inf"), "nsd": 0.0}
+    return {"hd95": float(np.percentile(distances, 95)),
+            "assd": float(np.mean(distances)),
+            "nsd": float(np.count_nonzero(distances <= tau) / distances.size)}
 
 class PatientVolumeDice:
     """Accumulate exact per-patient 3D Dice statistics from 2D batches.
