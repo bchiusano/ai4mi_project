@@ -59,3 +59,12 @@ data/SEGTHOR_CORRECTED:
 		--shape 384 384 --target-spacing 1.0 1.0 --window -1000 1000 \
 		--validation-count 4 --test-count 4 --test-pool-start 1
 	mv $@_tmp $@
+
+
+## For the preprocessed split cv zip
+data/SEGTHOR_FULL_PREPROCESSED_split_cv: data/SEGTHOR_FULL_PREPROCESSED_split_cv.zip
+	$(info $(yellow)unzip $<$(reset))
+	rm -rf $@_tmp
+	mkdir -p $@_tmp
+	unzip -q $< -d $@_tmp
+	mv $@_tmp $@s

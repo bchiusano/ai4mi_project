@@ -1,0 +1,30 @@
+============================================================================================== 
+Warning! Mixing Conda and module environments may lead to corruption of the
+user environment. 
+We do not recommend users mixing those two environments unless absolutely
+necessary. Note that 
+SURF does not provide any support for Conda environment.
+For more information, please refer to our software policy page:
+https://servicedesk.surf.nl/wiki/display/WIKI/Software+policy+Snellius#SoftwarepolicySnellius-UseofAnacondaandMinicondaenvironmentsonSnellius 
+
+Remember that many packages have already been installed on the system and can
+be loaded using 
+the 'module load <package__name>' command. If you are uncertain if a package is
+already available 
+on the system, please use 'module avail' or 'module spider' to search for it.
+============================================================================================== 
+test_combined_loss_is_sum_of_components (test_losses_and_metrics.LossTests.test_combined_loss_is_sum_of_components) ... ok
+test_losses_prefer_perfect_prediction (test_losses_and_metrics.LossTests.test_losses_prefer_perfect_prediction) ... ok
+test_empty_patient_class_is_nan (test_losses_and_metrics.PatientVolumeDiceTests.test_empty_patient_class_is_nan) ... ok
+test_patient_id_parsing (test_losses_and_metrics.PatientVolumeDiceTests.test_patient_id_parsing) ... ok
+test_perfect_patient_volume_scores_one (test_losses_and_metrics.PatientVolumeDiceTests.test_perfect_patient_volume_scores_one) ... ok
+test_volume_dice_does_not_reward_empty_slices (test_losses_and_metrics.PatientVolumeDiceTests.test_volume_dice_does_not_reward_empty_slices) ... ok
+test_all_epoch_cli_selects_best_volume_dice (test_losses_and_metrics.SavedPredictionEvaluationTests.test_all_epoch_cli_selects_best_volume_dice) ... ok
+test_epoch_discovery_is_numeric_and_requires_prediction_split (test_losses_and_metrics.SavedPredictionEvaluationTests.test_epoch_discovery_is_numeric_and_requires_prediction_split) ... ok
+test_saved_predictions_are_combined_as_patient_volumes (test_losses_and_metrics.SavedPredictionEvaluationTests.test_saved_predictions_are_combined_as_patient_volumes) ... ok
+
+----------------------------------------------------------------------
+Ran 9 tests in 2.706s
+
+OK
+Verified corrected dataset is missing: /scratch-shared/scur0199/ai4mi_project/data/SEGTHOR

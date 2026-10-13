@@ -1,0 +1,84 @@
+Started: Wed Sep 30 18:16:12 CEST 2026
+Host: gcn19.local.snellius.surf.nl
+Loss: dice
+Run directory: /scratch-shared/scur0199/ai4mi_project/results/segthor/preliminary_3d_dice/dice
+Git commit: 32257a554067ad4528ed6ca2df2d32fd7fc0ba8f
+Python 3.13.5
+NVIDIA A100-SXM4-40GB, 40960 MiB
+PyTorch CUDA: NVIDIA A100-SXM4-40GB
+Initialized CrossEntropy with {'idk': [0, 1]}
+Initialized DiceLoss with {'idk': [0, 1]}
+Initialized CrossEntropy with {'idk': [0, 1]}
+Initialized DiceLoss with {'idk': [0, 1], 'smooth': 1e-08}
+Initialized CrossEntropyDiceLoss with {'idk': [0, 1]}
+Initialized CrossEntropy with {'idk': [0, 1]}
+Initialized DiceLoss with {'idk': [0, 1]}
+Initialized CrossEntropy with {'idk': [0, 1]}
+Initialized DiceLoss with {'idk': [0, 1], 'smooth': 1e-08}
+Initialized CrossEntropyDiceLoss with {'idk': [0, 1]}
+wandb 0.30.0
+Namespace(epochs=25, dataset='SEGTHOR', mode='full', loss='dice', dest=PosixPath('/scratch-shared/scur0199/ai4mi_project/results/segthor/preliminary_3d_dice/dice'), gpu=True, debug=False)
+>>> Setting up to train on SEGTHOR with full
+>> Picked cuda to run experiments
+> Initialized ENet (in_dim=1->out_dim=5) with {'kernels': 8, 'factor': 2}
+> root=PosixPath('data/SEGTHOR')
+>> Created train dataset with 6432 images...
+> root=PosixPath('data/SEGTHOR')
+>> Created val dataset with 988 images...
+Initialized DiceLoss with {'idk': [0, 1, 2, 3, 4]}
+>>> Patient-level 3D validation Dice at epoch 0: 0.172 Dice-1=0.020 Dice-2=0.526 Dice-3=0.000 Dice-4=0.144
+>>> Initial patient-level 3D dice at epoch 0: 0.172 DSC
+>>> Patient-level 3D validation Dice at epoch 1: 0.436 Dice-1=0.404 Dice-2=0.505 Dice-3=0.596 Dice-4=0.239
+>>> Improved patient-level 3D dice at epoch 1: 0.172->0.436 DSC
+>>> Patient-level 3D validation Dice at epoch 2: 0.514 Dice-1=0.417 Dice-2=0.482 Dice-3=0.573 Dice-4=0.582
+>>> Improved patient-level 3D dice at epoch 2: 0.436->0.514 DSC
+>>> Patient-level 3D validation Dice at epoch 3: 0.553 Dice-1=0.368 Dice-2=0.578 Dice-3=0.638 Dice-4=0.629
+>>> Improved patient-level 3D dice at epoch 3: 0.514->0.553 DSC
+>>> Patient-level 3D validation Dice at epoch 4: 0.546 Dice-1=0.404 Dice-2=0.601 Dice-3=0.553 Dice-4=0.627
+>>> Patient-level 3D validation Dice at epoch 5: 0.589 Dice-1=0.431 Dice-2=0.611 Dice-3=0.656 Dice-4=0.659
+>>> Improved patient-level 3D dice at epoch 5: 0.553->0.589 DSC
+>>> Patient-level 3D validation Dice at epoch 6: 0.618 Dice-1=0.463 Dice-2=0.638 Dice-3=0.662 Dice-4=0.709
+>>> Improved patient-level 3D dice at epoch 6: 0.589->0.618 DSC
+>>> Patient-level 3D validation Dice at epoch 7: 0.611 Dice-1=0.439 Dice-2=0.614 Dice-3=0.671 Dice-4=0.720
+>>> Patient-level 3D validation Dice at epoch 8: 0.625 Dice-1=0.431 Dice-2=0.699 Dice-3=0.654 Dice-4=0.715
+>>> Improved patient-level 3D dice at epoch 8: 0.618->0.625 DSC
+>>> Patient-level 3D validation Dice at epoch 9: 0.623 Dice-1=0.422 Dice-2=0.732 Dice-3=0.629 Dice-4=0.708
+>>> Patient-level 3D validation Dice at epoch 10: 0.613 Dice-1=0.446 Dice-2=0.649 Dice-3=0.613 Dice-4=0.745
+>>> Patient-level 3D validation Dice at epoch 11: 0.659 Dice-1=0.489 Dice-2=0.769 Dice-3=0.615 Dice-4=0.761
+>>> Improved patient-level 3D dice at epoch 11: 0.625->0.659 DSC
+>>> Patient-level 3D validation Dice at epoch 12: 0.596 Dice-1=0.424 Dice-2=0.713 Dice-3=0.561 Dice-4=0.684
+>>> Patient-level 3D validation Dice at epoch 13: 0.628 Dice-1=0.449 Dice-2=0.765 Dice-3=0.537 Dice-4=0.761
+>>> Patient-level 3D validation Dice at epoch 14: 0.609 Dice-1=0.427 Dice-2=0.665 Dice-3=0.618 Dice-4=0.727
+>>> Patient-level 3D validation Dice at epoch 15: 0.652 Dice-1=0.451 Dice-2=0.721 Dice-3=0.703 Dice-4=0.734
+>>> Patient-level 3D validation Dice at epoch 16: 0.636 Dice-1=0.482 Dice-2=0.733 Dice-3=0.583 Dice-4=0.744
+>>> Patient-level 3D validation Dice at epoch 17: 0.624 Dice-1=0.453 Dice-2=0.739 Dice-3=0.602 Dice-4=0.701
+>>> Patient-level 3D validation Dice at epoch 18: 0.634 Dice-1=0.461 Dice-2=0.731 Dice-3=0.611 Dice-4=0.732
+>>> Patient-level 3D validation Dice at epoch 19: 0.463 Dice-1=0.000 Dice-2=0.647 Dice-3=0.706 Dice-4=0.498
+>>> Patient-level 3D validation Dice at epoch 20: 0.134 Dice-1=0.000 Dice-2=0.000 Dice-3=0.192 Dice-4=0.344
+>>> Patient-level 3D validation Dice at epoch 21: 0.303 Dice-1=0.000 Dice-2=0.000 Dice-3=0.677 Dice-4=0.535
+>>> Patient-level 3D validation Dice at epoch 22: 0.184 Dice-1=0.000 Dice-2=0.000 Dice-3=0.737 Dice-4=0.000
+>>> Patient-level 3D validation Dice at epoch 23: 0.000 Dice-1=0.000 Dice-2=0.000 Dice-3=0.000 Dice-4=0.000
+>>> Patient-level 3D validation Dice at epoch 24: 0.186 Dice-1=0.000 Dice-2=0.000 Dice-3=0.744 Dice-4=0.000
+Namespace(metric_file=PosixPath('/scratch-shared/scur0199/ai4mi_project/results/segthor/preliminary_3d_dice/dice/loss_tra.npy'), metric_file2=None, label1=None, label2=None, dest=PosixPath('/scratch-shared/scur0199/ai4mi_project/results/segthor/preliminary_3d_dice/dice/loss_train.png'), headless=True)
+Namespace(metric_file=PosixPath('/scratch-shared/scur0199/ai4mi_project/results/segthor/preliminary_3d_dice/dice/loss_val.npy'), metric_file2=None, label1=None, label2=None, dest=PosixPath('/scratch-shared/scur0199/ai4mi_project/results/segthor/preliminary_3d_dice/dice/loss_val.png'), headless=True)
+Namespace(metric_file=PosixPath('/scratch-shared/scur0199/ai4mi_project/results/segthor/preliminary_3d_dice/dice/dice3d_val.npy'), metric_file2=None, label1=None, label2=None, dest=PosixPath('/scratch-shared/scur0199/ai4mi_project/results/segthor/preliminary_3d_dice/dice/dice3d_val.png'), headless=True)
+Run directory: /scratch-shared/scur0199/ai4mi_project/results/segthor/preliminary_3d_dice/dice
+Completed epochs: 25
+Best 3D-Dice epoch: 11
+Mean foreground 3D Dice: 0.658507
+Training loss at best epoch: 0.533317
+Validation loss at best epoch: 0.585380
+Esophagus 3D Dice: 0.488737
+Heart 3D Dice: 0.769437
+Trachea 3D Dice: 0.614855
+Aorta 3D Dice: 0.761001
+Prediction directory: /scratch-shared/scur0199/ai4mi_project/results/segthor/preliminary_3d_dice/dice/best_epoch/val
+Patients: Patient_01, Patient_13, Patient_22, Patient_28, Patient_30
+Mean foreground patient-level 3D Dice: 0.658507
+Esophagus 3D Dice: 0.488737
+Heart 3D Dice: 0.769437
+Trachea 3D Dice: 0.614855
+Aorta 3D Dice: 0.761000
+Saved per-patient results to: /scratch-shared/scur0199/ai4mi_project/results/segthor/preliminary_3d_dice/dice/best_epoch_3d_dice.csv
+Baseline predictions not found at /scratch-shared/scur0199/ai4mi_project/results/segthor/baseline/best_epoch/val; skipping post-hoc baseline evaluation.
+Finished: Wed Sep 30 19:19:06 CEST 2026

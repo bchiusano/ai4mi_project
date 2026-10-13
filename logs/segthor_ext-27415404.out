@@ -1,0 +1,18 @@
+Started: Wed Sep 30 17:59:25 CEST 2026
+Host: gcn26.local.snellius.surf.nl
+Loss: dice
+Run directory: /scratch-shared/scur0199/ai4mi_project/results/segthor/preliminary_3d_dice/dice
+Git commit: 32257a554067ad4528ed6ca2df2d32fd7fc0ba8f
+Python 3.13.5
+NVIDIA A100-SXM4-40GB, 40960 MiB
+PyTorch CUDA: NVIDIA A100-SXM4-40GB
+Initialized CrossEntropy with {'idk': [0, 1]}
+Initialized DiceLoss with {'idk': [0, 1]}
+Initialized CrossEntropy with {'idk': [0, 1]}
+Initialized DiceLoss with {'idk': [0, 1], 'smooth': 1e-08}
+Initialized CrossEntropyDiceLoss with {'idk': [0, 1]}
+Initialized CrossEntropy with {'idk': [0, 1]}
+Initialized DiceLoss with {'idk': [0, 1]}
+Initialized CrossEntropy with {'idk': [0, 1]}
+Initialized DiceLoss with {'idk': [0, 1], 'smooth': 1e-08}
+Initialized CrossEntropyDiceLoss with {'idk': [0, 1]}
