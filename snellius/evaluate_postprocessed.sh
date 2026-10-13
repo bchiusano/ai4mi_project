@@ -15,7 +15,9 @@ cd $SLURM_SUBMIT_DIR
 # python -m evaluation.evaluate_saved_predictions --pred-dir results/heldout_predictions_postprocessed_slices/$m --gt-dir data/SEGTHOR_FULL/gt --split-file data/SEGTHOR_FULL/heldout_split.json --subset test --spacing-file data/SEGTHOR_FULL/spacing.pkl --in-plane-spacing-scale 1 --csv results/heldout_predictions/metrics_postprocessed/$m.csv
 #done
 
-for m in ce_dice_25d ce_dice_25d_aug weighted_ce_25d; do
-  echo "=== $m ==="
-  python -m evaluation.evaluate_saved_predictions --pred-dir results/heldout_predictions_postprocessed_pngs/$m --gt-dir data/SEGTHOR_FULL/gt --split-file data/SEGTHOR_FULL/heldout_split.json --subset test --spacing-file data/SEGTHOR_FULL/spacing.pkl --in-plane-spacing-scale 1 --csv results/heldout_predictions/metrics_postprocessed_png/$m.csv
-done
+#for m in ce_dice_25d ce_dice_25d_aug weighted_ce_25d; do
+#  echo "=== $m ==="
+#  python -m evaluation.evaluate_saved_predictions --pred-dir results/heldout_predictions_postprocessed_pngs/$m --gt-dir data/SEGTHOR_FULL/gt --split-file data/SEGTHOR_FULL/heldout_split.json --subset test --spacing-file data/SEGTHOR_FULL/spacing.pkl --in-plane-spacing-scale 1 --csv results/heldout_predictions/metrics_postprocessed_png/$m.csv
+#done
+
+python -m evaluation.evaluate_saved_predictions --pred-dir results/heldout_predictions_eso_close/ce_dice_25d_z5 --gt-dir data/SEGTHOR_FULL/gt --split-file data/SEGTHOR_FULL/heldout_split.json --subset test --spacing-file data/SEGTHOR_FULL/spacing.pkl --in-plane-spacing-scale 1 --csv results/heldout_predictions/metrics_eso_close/ce_dice_25d_z5.csv
