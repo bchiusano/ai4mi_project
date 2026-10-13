@@ -1,0 +1,10 @@
+Run directory: /scratch-shared/scur0152/ai4mi_project/results/segthor_full_cv/unet_cv32_final_20261009_175843/ce_dice_2d/fold_2
+Completed epochs: 39
+Best 3D-Dice epoch: 28
+Mean foreground 3D Dice: 0.853452
+Training loss at best epoch: 0.504842
+Validation loss at best epoch: 0.572003
+Esophagus 3D Dice: 0.674929
+Heart 3D Dice: 0.933340
+Trachea 3D Dice: 0.886814
+Aorta 3D Dice: 0.918726
